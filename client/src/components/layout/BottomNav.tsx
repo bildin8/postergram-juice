@@ -22,9 +22,7 @@ export function BottomNav({ role }: BottomNavProps) {
       { href: "/store/reorder", icon: LayoutGrid, label: "Order" },
     ],
     shop: [
-      { href: "/shop", icon: ShoppingCart, label: "POS" },
-      { href: "/shop/orders", icon: Package, label: "Orders" },
-      { href: "/shop/expenses", icon: LayoutGrid, label: "Expenses" },
+      { href: "/shop", icon: Package, label: "Stock" },
     ]
   };
 

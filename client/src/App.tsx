@@ -13,7 +13,7 @@ import StoreInventory from "@/pages/store/Inventory";
 import StoreDespatch from "@/pages/store/Despatch";
 import StoreReorder from "@/pages/store/Reorder";
 import StoreUsage from "@/pages/store/Usage";
-import ShopPOS from "@/pages/shop/POS";
+import ShopStock from "@/pages/shop/Stock";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -35,7 +35,7 @@ function Router() {
       <Route path="/store/usage" component={StoreUsage} />
       
       {/* Shop Routes */}
-      <Route path="/shop" component={ShopPOS} />
+      <Route path="/shop" component={ShopStock} />
       
       <Route component={NotFound} />
     </Switch>
