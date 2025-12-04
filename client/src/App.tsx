@@ -12,6 +12,7 @@ import OwnerSales from "@/pages/owner/Sales";
 import StoreInventory from "@/pages/store/Inventory";
 import StoreDespatch from "@/pages/store/Despatch";
 import StoreReorder from "@/pages/store/Reorder";
+import StoreUsage from "@/pages/store/Usage";
 import ShopPOS from "@/pages/shop/POS";
 import NotFound from "@/pages/not-found";
 
@@ -31,6 +32,7 @@ function Router() {
       <Route path="/store" component={StoreInventory} />
       <Route path="/store/despatch" component={StoreDespatch} />
       <Route path="/store/reorder" component={StoreReorder} />
+      <Route path="/store/usage" component={StoreUsage} />
       
       {/* Shop Routes */}
       <Route path="/shop" component={ShopPOS} />

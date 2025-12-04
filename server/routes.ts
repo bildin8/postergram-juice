@@ -321,6 +321,77 @@ export async function registerRoutes(
     }
   });
 
+  // ============ INGREDIENT MOVEMENTS ============
+  app.get("/api/posterpos/movements", async (req, res) => {
+    try {
+      const client = getPosterPOSClient();
+      const { from, to, type } = req.query;
+      
+      let dateFrom: string | undefined;
+      let dateTo: string | undefined;
+      
+      if (from) {
+        dateFrom = new Date(from as string).toISOString().split('T')[0].replace(/-/g, '');
+      } else {
+        // Default to today
+        dateFrom = new Date().toISOString().split('T')[0].replace(/-/g, '');
+      }
+      
+      if (to) {
+        dateTo = new Date(to as string).toISOString().split('T')[0].replace(/-/g, '');
+      } else {
+        dateTo = new Date().toISOString().split('T')[0].replace(/-/g, '');
+      }
+      
+      const movements = await client.getIngredientMovements(dateFrom, dateTo, type ? Number(type) : 1);
+      
+      // Filter to show only items with usage (write_offs > 0)
+      const withUsage = movements.filter(m => m.write_offs > 0);
+      
+      // Calculate summary
+      const totalUsage = movements.reduce((sum, m) => sum + m.write_offs, 0);
+      const totalCost = movements.reduce((sum, m) => sum + (m.write_offs * m.cost_end), 0);
+      
+      res.json({
+        movements,
+        withUsage,
+        summary: {
+          totalItems: movements.length,
+          itemsWithUsage: withUsage.length,
+          totalUsage,
+          totalCost: totalCost.toFixed(2),
+          dateFrom,
+          dateTo,
+        }
+      });
+    } catch (error: any) {
+      log(`Error fetching movements: ${error.message}`);
+      res.status(500).json({ message: error.message || "Failed to fetch ingredient movements" });
+    }
+  });
+
+  app.get("/api/posterpos/movements/today", async (req, res) => {
+    try {
+      const client = getPosterPOSClient();
+      const movements = await client.getTodaysIngredientMovements();
+      
+      // Filter to show only items with usage
+      const withUsage = movements.filter(m => m.write_offs > 0);
+      
+      res.json({
+        movements: withUsage,
+        summary: {
+          totalItems: movements.length,
+          itemsWithUsage: withUsage.length,
+          totalUsage: withUsage.reduce((sum, m) => sum + m.write_offs, 0),
+        }
+      });
+    } catch (error: any) {
+      log(`Error fetching today's movements: ${error.message}`);
+      res.status(500).json({ message: error.message || "Failed to fetch movements" });
+    }
+  });
+
   // ============ POSTERPOS WEBHOOK (Real-time receipts) ============
   app.post("/api/posterpos/webhook", async (req, res) => {
     try {

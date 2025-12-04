@@ -171,6 +171,48 @@ export class PosterPOSClient {
     const response = await this.request('dash.getAnalytics');
     return response.response || {};
   }
+
+  async getIngredientMovements(dateFrom?: string, dateTo?: string, type?: number): Promise<IngredientMovement[]> {
+    try {
+      const params: Record<string, string> = {};
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo) params.date_to = dateTo;
+      if (type) params.type = type.toString();
+      
+      const response = await this.request('storage.getReportMovement', params);
+      return response.response || [];
+    } catch (error) {
+      log(`Failed to get ingredient movements: ${error}`, 'posterpos');
+      return [];
+    }
+  }
+
+  async getTodaysIngredientMovements(): Promise<IngredientMovement[]> {
+    const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    return this.getIngredientMovements(today, today);
+  }
+
+  async getIngredientMovementsForRange(days: number = 7): Promise<IngredientMovement[]> {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - days);
+    
+    const dateFrom = from.toISOString().split('T')[0].replace(/-/g, '');
+    const dateTo = to.toISOString().split('T')[0].replace(/-/g, '');
+    
+    return this.getIngredientMovements(dateFrom, dateTo);
+  }
+}
+
+export interface IngredientMovement {
+  ingredient_id: string;
+  ingredient_name: string;
+  cost_start: number;
+  cost_end: number;
+  start: number;
+  income: number;
+  write_offs: number;
+  end: number;
 }
 
 // Singleton instance
