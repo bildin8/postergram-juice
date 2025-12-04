@@ -47,37 +47,22 @@ export class TelegramBotService {
           });
         }
         
-        // Send welcome with Mini App button
-        const webAppUrl = process.env.REPL_SLUG 
-          ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER?.toLowerCase()}.repl.co`
-          : process.env.WEBAPP_URL || '';
-          
+        // Send welcome with channel setup options
         const keyboard: any = {
-          inline_keyboard: []
+          inline_keyboard: [
+            [{ text: '🧾 Sales Channel', callback_data: 'setup_sales' }],
+            [{ text: '📦 Inventory Channel', callback_data: 'setup_inventory' }],
+            [{ text: '📋 All Notifications', callback_data: 'setup_owner' }],
+          ]
         };
-        
-        if (webAppUrl) {
-          keyboard.inline_keyboard.push([
-            { text: '📱 Open Mini App', web_app: { url: webAppUrl } }
-          ]);
-        }
-        
-        keyboard.inline_keyboard.push([
-          { text: '📊 Sales Report', callback_data: 'report' },
-          { text: '📦 Stock Levels', callback_data: 'stock' }
-        ]);
-        keyboard.inline_keyboard.push([
-          { text: '⚠️ Low Stock', callback_data: 'alerts' },
-          { text: '📋 Requests', callback_data: 'requests' }
-        ]);
         
         await this.bot.sendMessage(chatId, 
           '✅ *Welcome to Juicee Manager!*\n\n' +
-          'I\'ll send you real-time notifications for:\n' +
-          '🧾 New receipts and sales\n' +
-          '⚠️ Low stock alerts\n' +
-          '📋 Reorder requests\n\n' +
-          'Use the buttons below or type commands:',
+          '*Choose what notifications this chat should receive:*\n\n' +
+          '🧾 *Sales Channel* - Real-time receipt alerts\n' +
+          '📦 *Inventory Channel* - Stock usage & low stock\n' +
+          '📋 *All Notifications* - Everything\n\n' +
+          '_Tip: Add me to a group/channel and run /start to set it up_',
           { 
             parse_mode: 'Markdown',
             reply_markup: keyboard
@@ -96,6 +81,14 @@ export class TelegramBotService {
       const chatId = query.message.chat.id.toString();
       
       try {
+        // Handle channel setup
+        if (query.data.startsWith('setup_')) {
+          const role = query.data.replace('setup_', '');
+          await this.setupChannel(chatId, query.message.chat.type, role);
+          await this.bot.answerCallbackQuery(query.id, { text: 'Channel configured!' });
+          return;
+        }
+
         switch (query.data) {
           case 'report':
             await this.handleReport(chatId);
@@ -117,11 +110,44 @@ export class TelegramBotService {
       }
     });
 
+    // Command to show main menu
+    this.bot.onText(/\/menu/, async (msg) => {
+      const chatId = msg.chat.id.toString();
+      
+      const webAppUrl = process.env.REPL_SLUG 
+        ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER?.toLowerCase()}.repl.co`
+        : process.env.WEBAPP_URL || '';
+        
+      const keyboard: any = {
+        inline_keyboard: []
+      };
+      
+      if (webAppUrl) {
+        keyboard.inline_keyboard.push([
+          { text: '📱 Open Mini App', web_app: { url: webAppUrl } }
+        ]);
+      }
+      
+      keyboard.inline_keyboard.push([
+        { text: '📊 Sales Report', callback_data: 'report' },
+        { text: '📦 Stock Levels', callback_data: 'stock' }
+      ]);
+      keyboard.inline_keyboard.push([
+        { text: '⚠️ Low Stock', callback_data: 'alerts' },
+        { text: '📋 Requests', callback_data: 'requests' }
+      ]);
+      
+      await this.bot.sendMessage(chatId, '*Quick Actions:*', {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard
+      });
+    });
+
     this.bot.onText(/\/report/, (msg) => this.handleReport(msg.chat.id.toString()));
     this.bot.onText(/\/stock/, (msg) => this.handleStock(msg.chat.id.toString()));
     this.bot.onText(/\/alerts/, (msg) => this.handleAlerts(msg.chat.id.toString()));
     this.bot.onText(/\/requests/, (msg) => this.handleRequests(msg.chat.id.toString()));
-
+    
     this.bot.onText(/\/help/, async (msg) => {
       const chatId = msg.chat.id.toString();
       await this.bot.sendMessage(chatId,
@@ -130,10 +156,74 @@ export class TelegramBotService {
         '📦 /stock - Inventory levels\n' +
         '⚠️ /alerts - Low stock warnings\n' +
         '📋 /requests - Reorder requests\n' +
+        '📱 /menu - Quick actions menu\n' +
+        '⚙️ /status - Channel settings\n' +
         '/help - Show this message',
         { parse_mode: 'Markdown' }
       );
     });
+    
+    // Channel status command
+    this.bot.onText(/\/status/, async (msg) => {
+      const chatId = msg.chat.id.toString();
+      const chat = await storage.getTelegramChatByChatId(chatId);
+      
+      if (!chat) {
+        await this.bot.sendMessage(chatId, 'This chat is not registered. Use /start to set it up.');
+        return;
+      }
+      
+      const roleLabels: Record<string, string> = {
+        sales: '🧾 Sales Channel',
+        inventory: '📦 Inventory Channel',
+        owner: '📋 All Notifications',
+        store: '🏪 Store Manager',
+        shop: '🛒 Shop/POS',
+      };
+      
+      await this.bot.sendMessage(chatId, 
+        `*Channel Status*\n\n` +
+        `Type: ${roleLabels[chat.role] || chat.role}\n` +
+        `Active: ${chat.isActive ? '✅ Yes' : '❌ No'}\n\n` +
+        `Use /start to change notification type.`,
+        { parse_mode: 'Markdown' }
+      );
+    });
+  }
+
+  private async setupChannel(chatId: string, chatType: string, role: string) {
+    try {
+      const existing = await storage.getTelegramChatByChatId(chatId);
+      
+      if (existing) {
+        await storage.updateTelegramChat(existing.id, { role, isActive: true });
+      } else {
+        await storage.createTelegramChat({
+          chatId,
+          chatType,
+          role,
+          isActive: true,
+        });
+      }
+      
+      const roleLabels: Record<string, string> = {
+        sales: '🧾 Sales receipts',
+        inventory: '📦 Inventory & stock alerts',
+        owner: '📋 All notifications',
+      };
+      
+      await this.bot.sendMessage(chatId, 
+        `✅ *Channel configured!*\n\n` +
+        `This chat will now receive: ${roleLabels[role] || role}\n\n` +
+        `Use /menu for quick actions or /status to check settings.`,
+        { parse_mode: 'Markdown' }
+      );
+      
+      log(`Channel ${chatId} configured for ${role} notifications`, 'telegram');
+    } catch (error) {
+      log(`Error setting up channel: ${error}`, 'telegram');
+      throw error;
+    }
   }
 
   private async handleReport(chatId: string) {
@@ -238,12 +328,22 @@ export class TelegramBotService {
     }
   }
 
-  async sendNotification(message: string, role?: string) {
+  async sendNotification(message: string, targetRoles?: string | string[]) {
     try {
       const chats = await storage.getAllTelegramChats();
+      const roles = targetRoles 
+        ? (Array.isArray(targetRoles) ? targetRoles : [targetRoles])
+        : null;
       
       for (const chat of chats) {
-        if (!role || chat.role === role) {
+        if (!chat.isActive) continue;
+        
+        // owner role receives all notifications
+        const shouldReceive = !roles || 
+          roles.includes(chat.role) || 
+          chat.role === 'owner';
+        
+        if (shouldReceive) {
           try {
             await this.bot.sendMessage(chat.chatId, message, { parse_mode: 'Markdown' });
           } catch (error) {
@@ -257,13 +357,25 @@ export class TelegramBotService {
   }
 
   async sendSaleNotification(itemName: string, quantity: string, amount: string) {
-    const message = `💰 *New Sale!*\n${itemName} x${quantity}\nAmount: $${amount}`;
-    await this.sendNotification(message);
+    const message = `🧾 *New Receipt!*\n${itemName} x${quantity}\nAmount: KES ${amount}`;
+    await this.sendNotification(message, 'sales');
+  }
+
+  async sendReceiptNotification(total: number, items: string[]) {
+    const itemsList = items.slice(0, 3).join(', ') + (items.length > 3 ? ` +${items.length - 3} more` : '');
+    const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const message = `🧾 *New Receipt!*\nAmount: KES ${total.toFixed(2)}\nItems: ${itemsList}\nTime: ${time}`;
+    await this.sendNotification(message, 'sales');
   }
 
   async sendLowStockAlert(itemName: string, currentStock: string, minStock: string) {
     const message = `⚠️ *Low Stock Alert!*\n${itemName}\nCurrent: ${currentStock}\nMinimum: ${minStock}`;
-    await this.sendNotification(message, 'store');
+    await this.sendNotification(message, 'inventory');
+  }
+
+  async sendInventoryUpdate(action: string, details?: string) {
+    const message = `📦 *Inventory Update*\n${action}${details ? `\n${details}` : ''}`;
+    await this.sendNotification(message, 'inventory');
   }
 
   async sendReorderRequestNotification(itemName: string, requester: string) {

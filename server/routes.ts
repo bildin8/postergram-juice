@@ -342,17 +342,11 @@ export async function registerRoutes(
           }
         }
 
-        // Send Telegram notification for new sale
+        // Send Telegram notification for new sale to sales channel
         if (isTelegramBotInitialized()) {
           try {
             const bot = getTelegramBot();
-            const itemsList = items.slice(0, 3).join(', ') + (items.length > 3 ? ` +${items.length - 3} more` : '');
-            await bot.sendNotification(
-              `🧾 *New Receipt!*\n` +
-              `Amount: KES ${totalAmount.toFixed(2)}\n` +
-              `Items: ${itemsList}\n` +
-              `Time: ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
-            );
+            await bot.sendReceiptNotification(totalAmount, items);
           } catch (e) {
             log(`Failed to send receipt notification: ${e}`);
           }
@@ -377,13 +371,12 @@ export async function registerRoutes(
         }
       }
 
-      // Handle inventory changes
+      // Handle inventory changes - send to inventory channel
       if (object === 'storage' || object === 'ingredient') {
-        // Trigger inventory sync on stock changes
         if (isTelegramBotInitialized()) {
           try {
             const bot = getTelegramBot();
-            await bot.sendNotification(`📦 Inventory updated: ${action}`, 'store');
+            await bot.sendInventoryUpdate(`Stock ${action}`, data?.ingredient_name || data?.product_name);
           } catch (e) {
             log(`Failed to send inventory notification: ${e}`);
           }
