@@ -56,7 +56,8 @@ export function Expenses() {
   const { data: todayData, isLoading } = useQuery({
     queryKey: ["/api/shop/expenses/today"],
     queryFn: async () => {
-      const res = await fetch("/api/shop/expenses/today");
+      const res = await fetch("/api/shop/expenses/today", { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       return res.json();
     },
   });
@@ -64,7 +65,8 @@ export function Expenses() {
   const { data: allExpenses = [] } = useQuery<Expense[]>({
     queryKey: ["/api/shop/expenses"],
     queryFn: async () => {
-      const res = await fetch("/api/shop/expenses");
+      const res = await fetch("/api/shop/expenses", { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       return res.json();
     },
   });

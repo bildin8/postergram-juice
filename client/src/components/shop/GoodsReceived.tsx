@@ -45,7 +45,8 @@ export function GoodsReceived() {
   const { data: pending = [], isLoading: loadingPending } = useQuery<DespatchLog[]>({
     queryKey: ["/api/shop/goods/pending"],
     queryFn: async () => {
-      const res = await fetch("/api/shop/goods/pending");
+      const res = await fetch("/api/shop/goods/pending", { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       return res.json();
     },
   });
@@ -53,7 +54,8 @@ export function GoodsReceived() {
   const { data: receipts = [], isLoading: loadingReceipts } = useQuery<GoodsReceipt[]>({
     queryKey: ["/api/shop/goods/receipts"],
     queryFn: async () => {
-      const res = await fetch("/api/shop/goods/receipts");
+      const res = await fetch("/api/shop/goods/receipts", { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       return res.json();
     },
   });

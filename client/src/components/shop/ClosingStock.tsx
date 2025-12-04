@@ -45,7 +45,8 @@ export function ClosingStock() {
   const { data: openingSession } = useQuery({
     queryKey: ["/api/shop/stock/session/opening"],
     queryFn: async () => {
-      const res = await fetch("/api/shop/stock/session/opening");
+      const res = await fetch("/api/shop/stock/session/opening", { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       return res.json();
     },
   });
@@ -53,7 +54,8 @@ export function ClosingStock() {
   const { data: sessionData, isLoading: loadingSession } = useQuery({
     queryKey: ["/api/shop/stock/session/closing"],
     queryFn: async () => {
-      const res = await fetch("/api/shop/stock/session/closing");
+      const res = await fetch("/api/shop/stock/session/closing", { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       return res.json();
     },
   });
@@ -61,7 +63,8 @@ export function ClosingStock() {
   const { data: items = [], isLoading: loadingItems } = useQuery<InventoryItem[]>({
     queryKey: ["/api/shop/stock/items"],
     queryFn: async () => {
-      const res = await fetch("/api/shop/stock/items");
+      const res = await fetch("/api/shop/stock/items", { credentials: "include" });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       return res.json();
     },
   });
