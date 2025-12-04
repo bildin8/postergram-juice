@@ -2,7 +2,7 @@ import { MobileShell } from "@/components/layout/MobileShell";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, Users, DollarSign, Loader2, Package } from "lucide-react";
+import { TrendingUp, Users, DollarSign, Loader2, Package, Receipt } from "lucide-react";
 import { Area, AreaChart, CartesianGrid, XAxis, ResponsiveContainer, Tooltip } from "recharts";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -150,17 +150,23 @@ export default function OwnerDashboard() {
         {/* Quick Actions */}
         <div className="space-y-4">
           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider px-1">Quick Actions</h3>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
+            <Link href="/owner/sales">
+              <Button variant="outline" className="h-auto py-4 w-full flex flex-col gap-2 hover:border-primary/50 hover:bg-primary/5" data-testid="link-sales">
+                <Receipt className="h-6 w-6 text-primary" />
+                <span className="text-xs">Sales</span>
+              </Button>
+            </Link>
             <Link href="/owner/requests">
-              <Button variant="outline" className="h-auto py-4 w-full flex flex-col gap-2 hover:border-primary/50 hover:bg-primary/5">
+              <Button variant="outline" className="h-auto py-4 w-full flex flex-col gap-2 hover:border-primary/50 hover:bg-primary/5" data-testid="link-requests">
                 <Users className="h-6 w-6 text-primary" />
-                <span className="text-xs">Approve Requests</span>
+                <span className="text-xs">Requests</span>
               </Button>
             </Link>
             <Link href="/owner/analytics">
-              <Button variant="outline" className="h-auto py-4 w-full flex flex-col gap-2 hover:border-primary/50 hover:bg-primary/5">
+              <Button variant="outline" className="h-auto py-4 w-full flex flex-col gap-2 hover:border-primary/50 hover:bg-primary/5" data-testid="link-analytics">
                 <DollarSign className="h-6 w-6 text-primary" />
-                <span className="text-xs">View Analytics</span>
+                <span className="text-xs">Analytics</span>
               </Button>
             </Link>
           </div>
