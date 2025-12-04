@@ -6,6 +6,13 @@ import {
   despatchLogs, 
   reorderRequests,
   telegramChats,
+  shopStockSessions,
+  shopStockEntries,
+  goodsReceipts,
+  goodsReceiptItems,
+  shopExpenses,
+  expenseItems,
+  stockReconciliations,
   type User, 
   type InsertUser,
   type InventoryItem,
@@ -18,8 +25,22 @@ import {
   type InsertReorderRequest,
   type TelegramChat,
   type InsertTelegramChat,
+  type ShopStockSession,
+  type InsertShopStockSession,
+  type ShopStockEntry,
+  type InsertShopStockEntry,
+  type GoodsReceipt,
+  type InsertGoodsReceipt,
+  type GoodsReceiptItem,
+  type InsertGoodsReceiptItem,
+  type ShopExpense,
+  type InsertShopExpense,
+  type ExpenseItem,
+  type InsertExpenseItem,
+  type StockReconciliation,
+  type InsertStockReconciliation,
 } from "@shared/schema";
-import { eq, desc, gte, sql } from "drizzle-orm";
+import { eq, desc, gte, sql, and, between } from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -59,6 +80,51 @@ export interface IStorage {
   getTelegramChatByChatId(chatId: string): Promise<TelegramChat | undefined>;
   createTelegramChat(chat: InsertTelegramChat): Promise<TelegramChat>;
   updateTelegramChat(id: string, updates: Partial<InsertTelegramChat>): Promise<TelegramChat | undefined>;
+
+  // Shop Stock Sessions
+  createStockSession(session: InsertShopStockSession): Promise<ShopStockSession>;
+  getStockSession(id: string): Promise<ShopStockSession | undefined>;
+  getTodaysStockSession(type: 'opening' | 'closing'): Promise<ShopStockSession | undefined>;
+  getLatestStockSession(type: 'opening' | 'closing'): Promise<ShopStockSession | undefined>;
+  updateStockSession(id: string, updates: Partial<InsertShopStockSession>): Promise<ShopStockSession | undefined>;
+  
+  // Shop Stock Entries
+  createStockEntry(entry: InsertShopStockEntry): Promise<ShopStockEntry>;
+  getStockEntriesBySession(sessionId: string): Promise<ShopStockEntry[]>;
+  updateStockEntry(id: string, updates: Partial<InsertShopStockEntry>): Promise<ShopStockEntry | undefined>;
+
+  // Goods Receipts
+  createGoodsReceipt(receipt: InsertGoodsReceipt): Promise<GoodsReceipt>;
+  getGoodsReceipt(id: string): Promise<GoodsReceipt | undefined>;
+  getPendingGoodsReceipts(): Promise<GoodsReceipt[]>;
+  getAllGoodsReceipts(limit?: number): Promise<GoodsReceipt[]>;
+  updateGoodsReceipt(id: string, updates: Partial<InsertGoodsReceipt>): Promise<GoodsReceipt | undefined>;
+
+  // Goods Receipt Items
+  createGoodsReceiptItem(item: InsertGoodsReceiptItem): Promise<GoodsReceiptItem>;
+  getGoodsReceiptItems(receiptId: string): Promise<GoodsReceiptItem[]>;
+  updateGoodsReceiptItem(id: string, updates: Partial<InsertGoodsReceiptItem>): Promise<GoodsReceiptItem | undefined>;
+
+  // Shop Expenses
+  createExpense(expense: InsertShopExpense): Promise<ShopExpense>;
+  getExpense(id: string): Promise<ShopExpense | undefined>;
+  getAllExpenses(limit?: number): Promise<ShopExpense[]>;
+  getExpensesByType(type: string): Promise<ShopExpense[]>;
+  getTodaysExpenses(): Promise<ShopExpense[]>;
+
+  // Expense Items
+  createExpenseItem(item: InsertExpenseItem): Promise<ExpenseItem>;
+  getExpenseItems(expenseId: string): Promise<ExpenseItem[]>;
+
+  // Stock Reconciliation
+  createReconciliation(recon: InsertStockReconciliation): Promise<StockReconciliation>;
+  getReconciliation(id: string): Promise<StockReconciliation | undefined>;
+  getTodaysReconciliation(): Promise<StockReconciliation | undefined>;
+  updateReconciliation(id: string, updates: Partial<InsertStockReconciliation>): Promise<StockReconciliation | undefined>;
+
+  // Pending Despatch for Shop
+  getPendingDespatchForShop(): Promise<DespatchLog[]>;
+  getDespatchLog(id: string): Promise<DespatchLog | undefined>;
 }
 
 export class PostgresStorage implements IStorage {
@@ -216,6 +282,185 @@ export class PostgresStorage implements IStorage {
 
   async updateTelegramChat(id: string, updates: Partial<InsertTelegramChat>): Promise<TelegramChat | undefined> {
     const result = await db.update(telegramChats).set(updates).where(eq(telegramChats.id, id)).returning();
+    return result[0];
+  }
+
+  // Shop Stock Sessions
+  async createStockSession(session: InsertShopStockSession): Promise<ShopStockSession> {
+    const result = await db.insert(shopStockSessions).values(session).returning();
+    return result[0];
+  }
+
+  async getStockSession(id: string): Promise<ShopStockSession | undefined> {
+    const result = await db.select().from(shopStockSessions).where(eq(shopStockSessions.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getTodaysStockSession(type: 'opening' | 'closing'): Promise<ShopStockSession | undefined> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const result = await db.select().from(shopStockSessions)
+      .where(and(
+        eq(shopStockSessions.sessionType, type),
+        gte(shopStockSessions.date, today),
+        sql`${shopStockSessions.date} < ${tomorrow}`
+      ))
+      .orderBy(desc(shopStockSessions.startedAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async getLatestStockSession(type: 'opening' | 'closing'): Promise<ShopStockSession | undefined> {
+    const result = await db.select().from(shopStockSessions)
+      .where(eq(shopStockSessions.sessionType, type))
+      .orderBy(desc(shopStockSessions.startedAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async updateStockSession(id: string, updates: Partial<InsertShopStockSession>): Promise<ShopStockSession | undefined> {
+    const result = await db.update(shopStockSessions).set(updates).where(eq(shopStockSessions.id, id)).returning();
+    return result[0];
+  }
+
+  // Shop Stock Entries
+  async createStockEntry(entry: InsertShopStockEntry): Promise<ShopStockEntry> {
+    const result = await db.insert(shopStockEntries).values(entry).returning();
+    return result[0];
+  }
+
+  async getStockEntriesBySession(sessionId: string): Promise<ShopStockEntry[]> {
+    return db.select().from(shopStockEntries).where(eq(shopStockEntries.sessionId, sessionId));
+  }
+
+  async updateStockEntry(id: string, updates: Partial<InsertShopStockEntry>): Promise<ShopStockEntry | undefined> {
+    const result = await db.update(shopStockEntries).set(updates).where(eq(shopStockEntries.id, id)).returning();
+    return result[0];
+  }
+
+  // Goods Receipts
+  async createGoodsReceipt(receipt: InsertGoodsReceipt): Promise<GoodsReceipt> {
+    const result = await db.insert(goodsReceipts).values(receipt).returning();
+    return result[0];
+  }
+
+  async getGoodsReceipt(id: string): Promise<GoodsReceipt | undefined> {
+    const result = await db.select().from(goodsReceipts).where(eq(goodsReceipts.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getPendingGoodsReceipts(): Promise<GoodsReceipt[]> {
+    return db.select().from(goodsReceipts)
+      .where(eq(goodsReceipts.status, 'pending'))
+      .orderBy(desc(goodsReceipts.receivedAt));
+  }
+
+  async getAllGoodsReceipts(limit: number = 50): Promise<GoodsReceipt[]> {
+    return db.select().from(goodsReceipts).orderBy(desc(goodsReceipts.receivedAt)).limit(limit);
+  }
+
+  async updateGoodsReceipt(id: string, updates: Partial<InsertGoodsReceipt>): Promise<GoodsReceipt | undefined> {
+    const result = await db.update(goodsReceipts).set(updates).where(eq(goodsReceipts.id, id)).returning();
+    return result[0];
+  }
+
+  // Goods Receipt Items
+  async createGoodsReceiptItem(item: InsertGoodsReceiptItem): Promise<GoodsReceiptItem> {
+    const result = await db.insert(goodsReceiptItems).values(item).returning();
+    return result[0];
+  }
+
+  async getGoodsReceiptItems(receiptId: string): Promise<GoodsReceiptItem[]> {
+    return db.select().from(goodsReceiptItems).where(eq(goodsReceiptItems.receiptId, receiptId));
+  }
+
+  async updateGoodsReceiptItem(id: string, updates: Partial<InsertGoodsReceiptItem>): Promise<GoodsReceiptItem | undefined> {
+    const result = await db.update(goodsReceiptItems).set(updates).where(eq(goodsReceiptItems.id, id)).returning();
+    return result[0];
+  }
+
+  // Shop Expenses
+  async createExpense(expense: InsertShopExpense): Promise<ShopExpense> {
+    const result = await db.insert(shopExpenses).values(expense).returning();
+    return result[0];
+  }
+
+  async getExpense(id: string): Promise<ShopExpense | undefined> {
+    const result = await db.select().from(shopExpenses).where(eq(shopExpenses.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getAllExpenses(limit: number = 50): Promise<ShopExpense[]> {
+    return db.select().from(shopExpenses).orderBy(desc(shopExpenses.createdAt)).limit(limit);
+  }
+
+  async getExpensesByType(type: string): Promise<ShopExpense[]> {
+    return db.select().from(shopExpenses)
+      .where(eq(shopExpenses.expenseType, type))
+      .orderBy(desc(shopExpenses.createdAt));
+  }
+
+  async getTodaysExpenses(): Promise<ShopExpense[]> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return db.select().from(shopExpenses)
+      .where(gte(shopExpenses.createdAt, today))
+      .orderBy(desc(shopExpenses.createdAt));
+  }
+
+  // Expense Items
+  async createExpenseItem(item: InsertExpenseItem): Promise<ExpenseItem> {
+    const result = await db.insert(expenseItems).values(item).returning();
+    return result[0];
+  }
+
+  async getExpenseItems(expenseId: string): Promise<ExpenseItem[]> {
+    return db.select().from(expenseItems).where(eq(expenseItems.expenseId, expenseId));
+  }
+
+  // Stock Reconciliation
+  async createReconciliation(recon: InsertStockReconciliation): Promise<StockReconciliation> {
+    const result = await db.insert(stockReconciliations).values(recon).returning();
+    return result[0];
+  }
+
+  async getReconciliation(id: string): Promise<StockReconciliation | undefined> {
+    const result = await db.select().from(stockReconciliations).where(eq(stockReconciliations.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getTodaysReconciliation(): Promise<StockReconciliation | undefined> {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    const result = await db.select().from(stockReconciliations)
+      .where(and(
+        gte(stockReconciliations.date, today),
+        sql`${stockReconciliations.date} < ${tomorrow}`
+      ))
+      .limit(1);
+    return result[0];
+  }
+
+  async updateReconciliation(id: string, updates: Partial<InsertStockReconciliation>): Promise<StockReconciliation | undefined> {
+    const result = await db.update(stockReconciliations).set(updates).where(eq(stockReconciliations.id, id)).returning();
+    return result[0];
+  }
+
+  // Pending Despatch for Shop (items sent from Store to Shop)
+  async getPendingDespatchForShop(): Promise<DespatchLog[]> {
+    return db.select().from(despatchLogs)
+      .where(eq(despatchLogs.destination, 'shop'))
+      .orderBy(desc(despatchLogs.createdAt));
+  }
+
+  async getDespatchLog(id: string): Promise<DespatchLog | undefined> {
+    const result = await db.select().from(despatchLogs).where(eq(despatchLogs.id, id)).limit(1);
     return result[0];
   }
 }
