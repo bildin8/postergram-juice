@@ -184,6 +184,45 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/despatch/batch", async (req, res) => {
+    try {
+      const batchSchema = z.object({
+        items: z.array(z.object({
+          inventoryItemId: z.string(),
+          itemName: z.string(),
+          quantity: z.string(),
+          unit: z.string(),
+        })),
+        destination: z.string(),
+        createdBy: z.string(),
+      });
+      
+      const { items, destination, createdBy } = batchSchema.parse(req.body);
+      const results = [];
+      
+      for (const item of items) {
+        const data = {
+          inventoryItemId: item.inventoryItemId,
+          itemName: item.itemName,
+          quantity: item.quantity,
+          destination,
+          createdBy,
+        };
+        const result = await storage.createDespatchWithInventoryUpdate(data);
+        results.push(result);
+      }
+      
+      res.status(201).json({ count: results.length, despatches: results });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ message: "Invalid data", errors: error.errors });
+      } else {
+        log(`Error creating batch despatch: ${error.message}`);
+        res.status(500).json({ message: "Failed to create batch despatch" });
+      }
+    }
+  });
+
   // ============ REORDER REQUEST ROUTES ============
   app.get("/api/requests", async (req, res) => {
     try {
