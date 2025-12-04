@@ -46,9 +46,16 @@ export class PosterPOSClient {
     this.token = token;
   }
 
-  private async request(method: string): Promise<any> {
+  private async request(method: string, params?: Record<string, string>): Promise<any> {
     // Poster API uses method names like "menu.getProducts" with token as query param
-    const url = `${this.baseUrl}/api/${method}?token=${this.token}`;
+    const queryParams = new URLSearchParams({ token: this.token });
+    if (params) {
+      Object.entries(params).forEach(([key, value]) => {
+        queryParams.append(key, value);
+      });
+    }
+    
+    const url = `${this.baseUrl}/api/${method}?${queryParams.toString()}`;
     
     log(`PosterPOS request: ${method}`, 'posterpos');
     
@@ -131,9 +138,12 @@ export class PosterPOSClient {
 
   async getTransactions(dateFrom?: string, dateTo?: string): Promise<PosterPOSTransaction[]> {
     // Poster uses YYYYMMDD format for dates
-    // For transactions, we need to use finance.getTransactions
     try {
-      const response = await this.request('finance.getTransactions');
+      const params: Record<string, string> = {};
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo) params.date_to = dateTo;
+      
+      const response = await this.request('finance.getTransactions', params);
       return response.response || [];
     } catch (error) {
       log(`Failed to get transactions: ${error}`, 'posterpos');
@@ -144,6 +154,17 @@ export class PosterPOSClient {
   async getTodaysTransactions(): Promise<PosterPOSTransaction[]> {
     const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
     return this.getTransactions(today, today);
+  }
+
+  async getRecentTransactions(days: number = 7): Promise<PosterPOSTransaction[]> {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - days);
+    
+    const dateFrom = from.toISOString().split('T')[0].replace(/-/g, '');
+    const dateTo = to.toISOString().split('T')[0].replace(/-/g, '');
+    
+    return this.getTransactions(dateFrom, dateTo);
   }
 
   async getSalesReport(): Promise<any> {

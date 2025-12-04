@@ -286,10 +286,15 @@ export async function registerRoutes(
   app.post("/api/posterpos/sync/sales", async (req, res) => {
     try {
       const client = getPosterPOSClient();
-      const transactions = await client.getTodaysTransactions();
+      const days = Number(req.query.days) || 7;
+      const transactions = await client.getRecentTransactions(days);
+
+      log(`Fetched ${transactions.length} transactions from last ${days} days`);
 
       const synced: any[] = [];
       for (const transaction of transactions) {
+        if (!transaction.products) continue;
+        
         for (const product of transaction.products) {
           const posterPosId = `${transaction.transaction_id}-${product.product_id}`;
           
@@ -300,8 +305,8 @@ export async function registerRoutes(
           const sale = await storage.createSalesRecord({
             posterPosId,
             itemName: product.product_name,
-            quantity: product.num,
-            amount: product.product_sum.toString(),
+            quantity: product.num || '1',
+            amount: (product.product_sum || 0).toString(),
             timestamp: new Date(transaction.date_close),
             syncedAt: new Date(),
           });
@@ -309,7 +314,7 @@ export async function registerRoutes(
         }
       }
 
-      res.json({ message: `Synced ${synced.length} sales`, sales: synced });
+      res.json({ message: `Synced ${synced.length} sales from ${transactions.length} transactions`, sales: synced });
     } catch (error: any) {
       log(`Error syncing sales: ${error.message}`);
       res.status(500).json({ message: error.message || "Failed to sync sales" });
