@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { Home, LayoutGrid, ShoppingCart, Package, Settings, ArrowLeft } from "lucide-react";
+import { LayoutGrid, ShoppingCart, Package, Settings, ArrowLeft } from "lucide-react";
 
 interface BottomNavProps {
   role: "owner" | "store" | "shop";
@@ -33,16 +33,18 @@ export function BottomNav({ role }: BottomNavProps) {
         {links[role].map((link) => {
           const isActive = location === link.href;
           return (
-            <Link key={link.href} href={link.href}>
-              <a className={cn(
+            <Link 
+              key={link.href} 
+              href={link.href}
+              className={cn(
                 "flex flex-col items-center justify-center gap-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
                 isActive 
                   ? "text-primary" 
                   : "text-muted-foreground hover:text-foreground"
-              )}>
-                <link.icon className={cn("h-5 w-5", isActive && "fill-current opacity-20")} />
-                <span>{link.label}</span>
-              </a>
+              )}
+            >
+              <link.icon className={cn("h-5 w-5", isActive && "fill-current opacity-20")} />
+              <span>{link.label}</span>
             </Link>
           );
         })}

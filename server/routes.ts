@@ -1,10 +1,11 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { db } from "./db";
 import { z } from "zod";
-import { insertInventoryItemSchema, insertSalesRecordSchema, insertDespatchLogSchema, insertReorderRequestSchema, insertPosterPosConfigSchema } from "@shared/schema";
+import { insertInventoryItemSchema, insertSalesRecordSchema, insertDespatchLogSchema, insertReorderRequestSchema } from "@shared/schema";
 import { initPosterPOSClient, getPosterPOSClient } from "./posterpos";
-import { initTelegramBot, getTelegramBot } from "./telegram";
+import { initTelegramBot, getTelegramBot, isTelegramBotInitialized } from "./telegram";
 import { log } from "./index";
 
 export async function registerRoutes(
@@ -12,25 +13,27 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   
-  // Initialize services from config if available
-  const config = await storage.getPosterPosConfig();
-  if (config) {
+  // Initialize PosterPOS from environment variables (secure)
+  const posterEndpoint = process.env.POSTERPOS_API_ENDPOINT;
+  const posterToken = process.env.POSTERPOS_API_TOKEN;
+  
+  if (posterEndpoint && posterToken) {
     try {
-      initPosterPOSClient(config.apiEndpoint, config.apiToken);
-      log('PosterPOS client initialized from database config');
+      initPosterPOSClient(posterEndpoint, posterToken);
+      log('PosterPOS client initialized from environment');
     } catch (error) {
       log(`Failed to initialize PosterPOS client: ${error}`);
     }
   }
 
-  // Initialize Telegram bot if token is provided
+  // Initialize Telegram bot from environment variables (secure)
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
   const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL;
   
   if (telegramToken) {
     try {
       initTelegramBot(telegramToken, webhookUrl);
-      log('Telegram bot initialized');
+      log('Telegram bot initialized from environment');
     } catch (error) {
       log(`Failed to initialize Telegram bot: ${error}`);
     }
@@ -42,7 +45,8 @@ export async function registerRoutes(
       const items = await storage.getAllInventoryItems();
       res.json(items);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      log(`Error fetching inventory: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch inventory" });
     }
   });
 
@@ -51,7 +55,8 @@ export async function registerRoutes(
       const items = await storage.getLowStockItems();
       res.json(items);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      log(`Error fetching low stock: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch low stock items" });
     }
   });
 
@@ -64,7 +69,8 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         res.status(400).json({ message: "Invalid data", errors: error.errors });
       } else {
-        res.status(500).json({ message: error.message });
+        log(`Error creating inventory item: ${error.message}`);
+        res.status(500).json({ message: "Failed to create inventory item" });
       }
     }
   });
@@ -81,18 +87,22 @@ export async function registerRoutes(
       }
 
       // Check if stock is now low and send alert
-      if (Number(item.currentStock) <= Number(item.minStock)) {
+      const currentStock = Number(item.currentStock);
+      const minStock = Number(item.minStock);
+      
+      if (currentStock <= minStock && isTelegramBotInitialized()) {
         try {
           const bot = getTelegramBot();
           await bot.sendLowStockAlert(item.name, item.currentStock, item.minStock);
         } catch (e) {
-          // Telegram not configured, ignore
+          log(`Failed to send low stock alert: ${e}`);
         }
       }
 
       res.json(item);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      log(`Error updating inventory: ${error.message}`);
+      res.status(500).json({ message: "Failed to update inventory" });
     }
   });
 
@@ -103,7 +113,8 @@ export async function registerRoutes(
       const sales = await storage.getAllSalesRecords(limit);
       res.json(sales);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      log(`Error fetching sales: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch sales" });
     }
   });
 
@@ -112,7 +123,8 @@ export async function registerRoutes(
       const summary = await storage.getTodaysSales();
       res.json(summary);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      log(`Error fetching today's sales: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch today's sales" });
     }
   });
 
@@ -121,12 +133,14 @@ export async function registerRoutes(
       const data = insertSalesRecordSchema.parse(req.body);
       const sale = await storage.createSalesRecord(data);
 
-      // Send Telegram notification
-      try {
-        const bot = getTelegramBot();
-        await bot.sendSaleNotification(sale.itemName, sale.quantity, sale.amount);
-      } catch (e) {
-        // Telegram not configured, ignore
+      // Send Telegram notification if bot is configured
+      if (isTelegramBotInitialized()) {
+        try {
+          const bot = getTelegramBot();
+          await bot.sendSaleNotification(sale.itemName, sale.quantity, sale.amount);
+        } catch (e) {
+          log(`Failed to send sale notification: ${e}`);
+        }
       }
 
       res.status(201).json(sale);
@@ -134,7 +148,8 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         res.status(400).json({ message: "Invalid data", errors: error.errors });
       } else {
-        res.status(500).json({ message: error.message });
+        log(`Error creating sale: ${error.message}`);
+        res.status(500).json({ message: "Failed to create sale" });
       }
     }
   });
@@ -146,32 +161,25 @@ export async function registerRoutes(
       const logs = await storage.getAllDespatchLogs(limit);
       res.json(logs);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      log(`Error fetching despatch logs: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch despatch logs" });
     }
   });
 
   app.post("/api/despatch", async (req, res) => {
     try {
       const data = insertDespatchLogSchema.parse(req.body);
-      const log = await storage.createDespatchLog(data);
-
-      // Update inventory if we have the item ID
-      if (data.inventoryItemId) {
-        const item = await storage.getInventoryItem(data.inventoryItemId);
-        if (item) {
-          const newStock = Number(item.currentStock) - Number(data.quantity);
-          await storage.updateInventoryItem(data.inventoryItemId, {
-            currentStock: newStock.toString(),
-          });
-        }
-      }
-
-      res.status(201).json(log);
+      
+      // Use transaction to ensure atomic update
+      const result = await storage.createDespatchWithInventoryUpdate(data);
+      
+      res.status(201).json(result);
     } catch (error: any) {
       if (error instanceof z.ZodError) {
         res.status(400).json({ message: "Invalid data", errors: error.errors });
       } else {
-        res.status(500).json({ message: error.message });
+        log(`Error creating despatch: ${error.message}`);
+        res.status(500).json({ message: "Failed to create despatch log" });
       }
     }
   });
@@ -185,7 +193,8 @@ export async function registerRoutes(
         : await storage.getAllReorderRequests();
       res.json(requests);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      log(`Error fetching requests: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch requests" });
     }
   });
 
@@ -194,12 +203,14 @@ export async function registerRoutes(
       const data = insertReorderRequestSchema.parse(req.body);
       const request = await storage.createReorderRequest(data);
 
-      // Send notification to owner
-      try {
-        const bot = getTelegramBot();
-        await bot.sendReorderRequestNotification(request.itemName, request.requester);
-      } catch (e) {
-        // Telegram not configured, ignore
+      // Send notification to owner if bot is configured
+      if (isTelegramBotInitialized()) {
+        try {
+          const bot = getTelegramBot();
+          await bot.sendReorderRequestNotification(request.itemName, request.requester);
+        } catch (e) {
+          log(`Failed to send reorder notification: ${e}`);
+        }
       }
 
       res.status(201).json(request);
@@ -207,7 +218,8 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         res.status(400).json({ message: "Invalid data", errors: error.errors });
       } else {
-        res.status(500).json({ message: error.message });
+        log(`Error creating request: ${error.message}`);
+        res.status(500).json({ message: "Failed to create request" });
       }
     }
   });
@@ -230,29 +242,12 @@ export async function registerRoutes(
 
       res.json(request);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      log(`Error updating request: ${error.message}`);
+      res.status(500).json({ message: "Failed to update request" });
     }
   });
 
   // ============ POSTERPOS SYNC ROUTES ============
-  app.post("/api/posterpos/config", async (req, res) => {
-    try {
-      const data = insertPosterPosConfigSchema.parse(req.body);
-      const config = await storage.createOrUpdatePosterPosConfig(data);
-      
-      // Initialize or reinitialize the client
-      initPosterPOSClient(config.apiEndpoint, config.apiToken);
-      
-      res.json(config);
-    } catch (error: any) {
-      if (error instanceof z.ZodError) {
-        res.status(400).json({ message: "Invalid data", errors: error.errors });
-      } else {
-        res.status(500).json({ message: error.message });
-      }
-    }
-  });
-
   app.post("/api/posterpos/sync/inventory", async (req, res) => {
     try {
       const client = getPosterPOSClient();
@@ -283,7 +278,8 @@ export async function registerRoutes(
 
       res.json({ message: `Synced ${synced.length} items`, items: synced });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      log(`Error syncing inventory: ${error.message}`);
+      res.status(500).json({ message: error.message || "Failed to sync inventory" });
     }
   });
 
@@ -295,11 +291,14 @@ export async function registerRoutes(
       const synced: any[] = [];
       for (const transaction of transactions) {
         for (const product of transaction.products) {
-          const existing = await storage.getAllSalesRecords(1);
-          // Simple check to avoid duplicates - in production, use transaction_id
+          const posterPosId = `${transaction.transaction_id}-${product.product_id}`;
+          
+          // Check if already synced to avoid duplicates
+          const existing = await storage.getSalesRecordByPosterPosId(posterPosId);
+          if (existing) continue;
           
           const sale = await storage.createSalesRecord({
-            posterPosId: `${transaction.transaction_id}-${product.product_id}`,
+            posterPosId,
             itemName: product.product_name,
             quantity: product.count,
             amount: product.product_price,
@@ -312,18 +311,24 @@ export async function registerRoutes(
 
       res.json({ message: `Synced ${synced.length} sales`, sales: synced });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      log(`Error syncing sales: ${error.message}`);
+      res.status(500).json({ message: error.message || "Failed to sync sales" });
     }
   });
 
   // ============ TELEGRAM WEBHOOK ============
   app.post("/api/telegram/webhook", async (req, res) => {
     try {
+      if (!isTelegramBotInitialized()) {
+        res.status(503).json({ message: "Telegram bot not configured" });
+        return;
+      }
+      
       const bot = getTelegramBot();
       await bot.processWebhookUpdate(req.body);
       res.sendStatus(200);
     } catch (error: any) {
-      log(`Telegram webhook error: ${error}`, 'telegram');
+      log(`Telegram webhook error: ${error}`);
       res.sendStatus(500);
     }
   });
@@ -356,8 +361,17 @@ export async function registerRoutes(
 
       res.json(result);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      log(`Error fetching analytics: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch analytics" });
     }
+  });
+
+  // ============ CONFIG STATUS ROUTES ============
+  app.get("/api/config/status", async (req, res) => {
+    res.json({
+      posterpos: !!posterEndpoint && !!posterToken,
+      telegram: !!telegramToken,
+    });
   });
 
   return httpServer;

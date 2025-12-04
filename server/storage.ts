@@ -6,7 +6,6 @@ import {
   despatchLogs, 
   reorderRequests,
   telegramChats,
-  posterPosConfig,
   type User, 
   type InsertUser,
   type InventoryItem,
@@ -19,10 +18,8 @@ import {
   type InsertReorderRequest,
   type TelegramChat,
   type InsertTelegramChat,
-  type PosterPosConfig,
-  type InsertPosterPosConfig
 } from "@shared/schema";
-import { eq, desc, and, gte, sql } from "drizzle-orm";
+import { eq, desc, gte, sql } from "drizzle-orm";
 
 export interface IStorage {
   // Users
@@ -41,12 +38,14 @@ export interface IStorage {
   // Sales Records
   getAllSalesRecords(limit?: number): Promise<SalesRecord[]>;
   getSalesRecordsSince(since: Date): Promise<SalesRecord[]>;
+  getSalesRecordByPosterPosId(posterPosId: string): Promise<SalesRecord | undefined>;
   createSalesRecord(record: InsertSalesRecord): Promise<SalesRecord>;
   getTodaysSales(): Promise<{ total: number; count: number }>;
 
   // Despatch Logs
   getAllDespatchLogs(limit?: number): Promise<DespatchLog[]>;
   createDespatchLog(log: InsertDespatchLog): Promise<DespatchLog>;
+  createDespatchWithInventoryUpdate(log: InsertDespatchLog): Promise<DespatchLog>;
 
   // Reorder Requests
   getAllReorderRequests(): Promise<ReorderRequest[]>;
@@ -60,10 +59,6 @@ export interface IStorage {
   getTelegramChatByChatId(chatId: string): Promise<TelegramChat | undefined>;
   createTelegramChat(chat: InsertTelegramChat): Promise<TelegramChat>;
   updateTelegramChat(id: string, updates: Partial<InsertTelegramChat>): Promise<TelegramChat | undefined>;
-
-  // PosterPOS Config
-  getPosterPosConfig(): Promise<PosterPosConfig | undefined>;
-  createOrUpdatePosterPosConfig(config: InsertPosterPosConfig): Promise<PosterPosConfig>;
 }
 
 export class PostgresStorage implements IStorage {
@@ -110,7 +105,7 @@ export class PostgresStorage implements IStorage {
 
   async getLowStockItems(): Promise<InventoryItem[]> {
     return db.select().from(inventoryItems).where(
-      sql`${inventoryItems.currentStock} <= ${inventoryItems.minStock}`
+      sql`CAST(${inventoryItems.currentStock} AS DECIMAL) <= CAST(${inventoryItems.minStock} AS DECIMAL)`
     );
   }
 
@@ -123,6 +118,11 @@ export class PostgresStorage implements IStorage {
     return db.select().from(salesRecords).where(gte(salesRecords.timestamp, since)).orderBy(desc(salesRecords.timestamp));
   }
 
+  async getSalesRecordByPosterPosId(posterPosId: string): Promise<SalesRecord | undefined> {
+    const result = await db.select().from(salesRecords).where(eq(salesRecords.posterPosId, posterPosId)).limit(1);
+    return result[0];
+  }
+
   async createSalesRecord(record: InsertSalesRecord): Promise<SalesRecord> {
     const result = await db.insert(salesRecords).values(record).returning();
     return result[0];
@@ -133,7 +133,7 @@ export class PostgresStorage implements IStorage {
     today.setHours(0, 0, 0, 0);
     
     const result = await db.select({
-      total: sql<number>`COALESCE(SUM(${salesRecords.amount}), 0)`,
+      total: sql<number>`COALESCE(SUM(CAST(${salesRecords.amount} AS DECIMAL)), 0)`,
       count: sql<number>`COUNT(*)::int`
     }).from(salesRecords).where(gte(salesRecords.timestamp, today));
 
@@ -151,6 +151,28 @@ export class PostgresStorage implements IStorage {
   async createDespatchLog(log: InsertDespatchLog): Promise<DespatchLog> {
     const result = await db.insert(despatchLogs).values(log).returning();
     return result[0];
+  }
+
+  async createDespatchWithInventoryUpdate(log: InsertDespatchLog): Promise<DespatchLog> {
+    // Use a transaction to ensure atomic operations
+    return await db.transaction(async (tx) => {
+      // Create the despatch log
+      const [despatch] = await tx.insert(despatchLogs).values(log).returning();
+      
+      // Update inventory if we have the item ID
+      if (log.inventoryItemId) {
+        const [item] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, log.inventoryItemId)).limit(1);
+        
+        if (item) {
+          const newStock = Math.max(0, Number(item.currentStock) - Number(log.quantity));
+          await tx.update(inventoryItems).set({
+            currentStock: newStock.toString(),
+          }).where(eq(inventoryItems.id, log.inventoryItemId));
+        }
+      }
+      
+      return despatch;
+    });
   }
 
   // Reorder Requests
@@ -195,23 +217,6 @@ export class PostgresStorage implements IStorage {
   async updateTelegramChat(id: string, updates: Partial<InsertTelegramChat>): Promise<TelegramChat | undefined> {
     const result = await db.update(telegramChats).set(updates).where(eq(telegramChats.id, id)).returning();
     return result[0];
-  }
-
-  // PosterPOS Config
-  async getPosterPosConfig(): Promise<PosterPosConfig | undefined> {
-    const result = await db.select().from(posterPosConfig).limit(1);
-    return result[0];
-  }
-
-  async createOrUpdatePosterPosConfig(config: InsertPosterPosConfig): Promise<PosterPosConfig> {
-    const existing = await this.getPosterPosConfig();
-    if (existing) {
-      const result = await db.update(posterPosConfig).set(config).where(eq(posterPosConfig.id, existing.id)).returning();
-      return result[0];
-    } else {
-      const result = await db.insert(posterPosConfig).values(config).returning();
-      return result[0];
-    }
   }
 }
 
