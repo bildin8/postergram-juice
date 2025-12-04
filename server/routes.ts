@@ -547,6 +547,588 @@ export async function registerRoutes(
     }
   });
 
+  // ============ SHOP STOCK SESSIONS ============
+  
+  // Get current or create new stock session
+  app.get("/api/shop/stock/session/:type", async (req, res) => {
+    try {
+      const type = req.params.type as 'opening' | 'closing';
+      if (type !== 'opening' && type !== 'closing') {
+        res.status(400).json({ message: "Invalid session type" });
+        return;
+      }
+      
+      const session = await storage.getTodaysStockSession(type);
+      if (session) {
+        const entries = await storage.getStockEntriesBySession(session.id);
+        res.json({ session, entries });
+      } else {
+        res.json({ session: null, entries: [] });
+      }
+    } catch (error: any) {
+      log(`Error fetching stock session: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch session" });
+    }
+  });
+
+  // Start a new stock session (opening or closing)
+  app.post("/api/shop/stock/session", async (req, res) => {
+    try {
+      const { sessionType, staffName } = req.body;
+      
+      if (!sessionType || !staffName) {
+        res.status(400).json({ message: "sessionType and staffName are required" });
+        return;
+      }
+      
+      // Check if session already exists for today
+      const existing = await storage.getTodaysStockSession(sessionType);
+      if (existing && existing.status === 'in_progress') {
+        const entries = await storage.getStockEntriesBySession(existing.id);
+        res.json({ session: existing, entries, resumed: true });
+        return;
+      }
+      
+      // Get inventory items count
+      const items = await storage.getAllInventoryItems();
+      
+      const session = await storage.createStockSession({
+        sessionType,
+        staffName,
+        status: 'in_progress',
+        totalItems: items.length,
+        countedItems: 0,
+      });
+      
+      res.status(201).json({ session, entries: [], items });
+    } catch (error: any) {
+      log(`Error creating stock session: ${error.message}`);
+      res.status(500).json({ message: "Failed to create session" });
+    }
+  });
+
+  // Save a stock entry (individual item count)
+  app.post("/api/shop/stock/entry", async (req, res) => {
+    try {
+      const { sessionId, itemName, quantity, unit, inventoryItemId, posterPosId, notes } = req.body;
+      
+      if (!sessionId || !itemName || quantity === undefined) {
+        res.status(400).json({ message: "sessionId, itemName, and quantity are required" });
+        return;
+      }
+      
+      const entry = await storage.createStockEntry({
+        sessionId,
+        itemName,
+        quantity: quantity.toString(),
+        unit: unit || 'units',
+        inventoryItemId,
+        posterPosId,
+        notes,
+      });
+      
+      // Update session counted items
+      const session = await storage.getStockSession(sessionId);
+      if (session) {
+        await storage.updateStockSession(sessionId, {
+          countedItems: (session.countedItems || 0) + 1,
+        });
+      }
+      
+      res.status(201).json(entry);
+    } catch (error: any) {
+      log(`Error saving stock entry: ${error.message}`);
+      res.status(500).json({ message: "Failed to save entry" });
+    }
+  });
+
+  // Complete a stock session
+  app.patch("/api/shop/stock/session/:id/complete", async (req, res) => {
+    try {
+      const { id } = req.params;
+      
+      const session = await storage.updateStockSession(id, {
+        status: 'completed',
+        completedAt: new Date(),
+      });
+      
+      if (!session) {
+        res.status(404).json({ message: "Session not found" });
+        return;
+      }
+      
+      // If this is closing stock, trigger reconciliation
+      if (session.sessionType === 'closing') {
+        const openingSession = await storage.getTodaysStockSession('opening');
+        if (openingSession && openingSession.status === 'completed') {
+          // Trigger reconciliation calculation
+          try {
+            await calculateAndSendReconciliation(openingSession.id, session.id);
+          } catch (e) {
+            log(`Reconciliation failed: ${e}`);
+          }
+        }
+      }
+      
+      res.json(session);
+    } catch (error: any) {
+      log(`Error completing session: ${error.message}`);
+      res.status(500).json({ message: "Failed to complete session" });
+    }
+  });
+
+  // Get inventory items for wizard
+  app.get("/api/shop/stock/items", async (req, res) => {
+    try {
+      const items = await storage.getAllInventoryItems();
+      res.json(items);
+    } catch (error: any) {
+      log(`Error fetching items: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch items" });
+    }
+  });
+
+  // ============ GOODS RECEIVED ============
+  
+  // Get pending dispatches from store
+  app.get("/api/shop/goods/pending", async (req, res) => {
+    try {
+      const despatchLogs = await storage.getPendingDespatchForShop();
+      res.json(despatchLogs);
+    } catch (error: any) {
+      log(`Error fetching pending goods: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch pending goods" });
+    }
+  });
+
+  // Get all goods receipts
+  app.get("/api/shop/goods/receipts", async (req, res) => {
+    try {
+      const receipts = await storage.getAllGoodsReceipts();
+      res.json(receipts);
+    } catch (error: any) {
+      log(`Error fetching receipts: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch receipts" });
+    }
+  });
+
+  // Create goods receipt from despatch
+  app.post("/api/shop/goods/receive", async (req, res) => {
+    try {
+      const { despatchLogId, receivedBy, items, notes } = req.body;
+      
+      if (!receivedBy || !items || !Array.isArray(items)) {
+        res.status(400).json({ message: "receivedBy and items array are required" });
+        return;
+      }
+      
+      // Create the receipt
+      const receipt = await storage.createGoodsReceipt({
+        despatchLogId,
+        receivedBy,
+        status: 'received',
+        notes,
+      });
+      
+      // Add items to receipt
+      for (const item of items) {
+        await storage.createGoodsReceiptItem({
+          receiptId: receipt.id,
+          itemName: item.itemName,
+          expectedQuantity: item.expectedQuantity?.toString() || '0',
+          receivedQuantity: item.receivedQuantity?.toString() || item.expectedQuantity?.toString() || '0',
+          unit: item.unit || 'units',
+          costPerUnit: item.costPerUnit?.toString(),
+          inventoryItemId: item.inventoryItemId,
+          posterPosId: item.posterPosId,
+          notes: item.notes,
+        });
+      }
+      
+      // Generate Excel file
+      const excelPath = await generateGoodsReceiptExcel(receipt.id);
+      if (excelPath) {
+        await storage.updateGoodsReceipt(receipt.id, { excelFilePath: excelPath });
+      }
+      
+      res.status(201).json({ receipt, excelPath });
+    } catch (error: any) {
+      log(`Error receiving goods: ${error.message}`);
+      res.status(500).json({ message: "Failed to receive goods" });
+    }
+  });
+
+  // Download goods receipt Excel
+  app.get("/api/shop/goods/receipt/:id/excel", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const receipt = await storage.getGoodsReceipt(id);
+      
+      if (!receipt) {
+        res.status(404).json({ message: "Receipt not found" });
+        return;
+      }
+      
+      // Generate fresh Excel file
+      const excelBuffer = await generateGoodsReceiptExcelBuffer(id);
+      
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename=goods_receipt_${id}.xlsx`);
+      res.send(excelBuffer);
+    } catch (error: any) {
+      log(`Error generating Excel: ${error.message}`);
+      res.status(500).json({ message: "Failed to generate Excel" });
+    }
+  });
+
+  // ============ SHOP EXPENSES ============
+  
+  // Get all expenses
+  app.get("/api/shop/expenses", async (req, res) => {
+    try {
+      const { type } = req.query;
+      
+      let expenses;
+      if (type) {
+        expenses = await storage.getExpensesByType(type as string);
+      } else {
+        expenses = await storage.getAllExpenses();
+      }
+      
+      // Get items for supermarket expenses
+      const expensesWithItems = await Promise.all(
+        expenses.map(async (expense) => {
+          const items = expense.expenseType === 'supermarket' 
+            ? await storage.getExpenseItems(expense.id)
+            : [];
+          return { ...expense, items };
+        })
+      );
+      
+      res.json(expensesWithItems);
+    } catch (error: any) {
+      log(`Error fetching expenses: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch expenses" });
+    }
+  });
+
+  // Get today's expenses summary
+  app.get("/api/shop/expenses/today", async (req, res) => {
+    try {
+      const expenses = await storage.getTodaysExpenses();
+      const total = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
+      
+      // Group by category
+      const byCategory: Record<string, number> = {};
+      expenses.forEach(e => {
+        const cat = e.category || e.expenseType;
+        byCategory[cat] = (byCategory[cat] || 0) + Number(e.amount);
+      });
+      
+      res.json({ expenses, total, byCategory });
+    } catch (error: any) {
+      log(`Error fetching today's expenses: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch expenses" });
+    }
+  });
+
+  // Create expense (supermarket or petty cash)
+  app.post("/api/shop/expenses", async (req, res) => {
+    try {
+      const { expenseType, category, description, amount, paidBy, paidTo, receiptNumber, notes, items } = req.body;
+      
+      if (!expenseType || !description || !amount || !paidBy) {
+        res.status(400).json({ message: "expenseType, description, amount, and paidBy are required" });
+        return;
+      }
+      
+      const expense = await storage.createExpense({
+        expenseType,
+        category,
+        description,
+        amount: amount.toString(),
+        paidBy,
+        paidTo,
+        receiptNumber,
+        notes,
+      });
+      
+      // If supermarket expense with items, add them
+      if (expenseType === 'supermarket' && items && Array.isArray(items)) {
+        for (const item of items) {
+          await storage.createExpenseItem({
+            expenseId: expense.id,
+            itemName: item.itemName,
+            quantity: item.quantity?.toString() || '1',
+            unit: item.unit || 'units',
+            costPerUnit: item.costPerUnit?.toString(),
+            inventoryItemId: item.inventoryItemId,
+          });
+        }
+      }
+      
+      res.status(201).json(expense);
+    } catch (error: any) {
+      log(`Error creating expense: ${error.message}`);
+      res.status(500).json({ message: "Failed to create expense" });
+    }
+  });
+
+  // ============ RECONCILIATION ============
+  
+  // Get today's reconciliation
+  app.get("/api/shop/reconciliation/today", async (req, res) => {
+    try {
+      const recon = await storage.getTodaysReconciliation();
+      res.json(recon || { status: 'pending' });
+    } catch (error: any) {
+      log(`Error fetching reconciliation: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch reconciliation" });
+    }
+  });
+
+  // Trigger manual reconciliation
+  app.post("/api/shop/reconciliation/calculate", async (req, res) => {
+    try {
+      const openingSession = await storage.getTodaysStockSession('opening');
+      const closingSession = await storage.getTodaysStockSession('closing');
+      
+      if (!openingSession || openingSession.status !== 'completed') {
+        res.status(400).json({ message: "Opening stock must be completed first" });
+        return;
+      }
+      
+      if (!closingSession || closingSession.status !== 'completed') {
+        res.status(400).json({ message: "Closing stock must be completed first" });
+        return;
+      }
+      
+      const result = await calculateAndSendReconciliation(openingSession.id, closingSession.id);
+      res.json(result);
+    } catch (error: any) {
+      log(`Error calculating reconciliation: ${error.message}`);
+      res.status(500).json({ message: "Failed to calculate reconciliation" });
+    }
+  });
+
+  // Helper function for reconciliation
+  async function calculateAndSendReconciliation(openingId: string, closingId: string) {
+    const openingEntries = await storage.getStockEntriesBySession(openingId);
+    const closingEntries = await storage.getStockEntriesBySession(closingId);
+    
+    // Get goods received today
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const receipts = await storage.getAllGoodsReceipts(20);
+    const todayReceipts = receipts.filter(r => new Date(r.receivedAt) >= today);
+    
+    // Build lookup maps
+    const openingMap = new Map(openingEntries.map(e => [e.itemName, Number(e.quantity)]));
+    const closingMap = new Map(closingEntries.map(e => [e.itemName, Number(e.quantity)]));
+    
+    // Calculate received quantities per item
+    const receivedMap = new Map<string, number>();
+    for (const receipt of todayReceipts) {
+      const items = await storage.getGoodsReceiptItems(receipt.id);
+      for (const item of items) {
+        const current = receivedMap.get(item.itemName) || 0;
+        receivedMap.set(item.itemName, current + Number(item.receivedQuantity || 0));
+      }
+    }
+    
+    // Calculate variances
+    const allItems = new Set([...Array.from(openingMap.keys()), ...Array.from(closingMap.keys())]);
+    let overItems = 0;
+    let underItems = 0;
+    let matchedItems = 0;
+    
+    const details: Array<{
+      item: string;
+      opening: number;
+      received: number;
+      expected: number;
+      closing: number;
+      variance: number;
+      status: 'over' | 'under' | 'equal';
+    }> = [];
+    
+    allItems.forEach(itemName => {
+      const opening = openingMap.get(itemName) || 0;
+      const received = receivedMap.get(itemName) || 0;
+      const closing = closingMap.get(itemName) || 0;
+      const expected = opening + received;
+      const variance = closing - expected;
+      
+      let status: 'over' | 'under' | 'equal';
+      if (variance > 0) {
+        status = 'over';
+        overItems++;
+      } else if (variance < 0) {
+        status = 'under';
+        underItems++;
+      } else {
+        status = 'equal';
+        matchedItems++;
+      }
+      
+      details.push({ item: itemName, opening, received, expected, closing, variance, status });
+    });
+    
+    // Save reconciliation
+    const recon = await storage.createReconciliation({
+      date: new Date(),
+      openingSessionId: openingId,
+      closingSessionId: closingId,
+      status: 'completed',
+      overItems,
+      underItems,
+      matchedItems,
+    });
+    
+    // Send to owner via Telegram
+    if (isTelegramBotInitialized()) {
+      try {
+        const bot = getTelegramBot();
+        
+        const overDetails = details.filter(d => d.status === 'over').map(d => 
+          `  ${d.item}: +${d.variance} (expected ${d.expected}, found ${d.closing})`
+        ).join('\n');
+        
+        const underDetails = details.filter(d => d.status === 'under').map(d => 
+          `  ${d.item}: ${d.variance} (expected ${d.expected}, found ${d.closing})`
+        ).join('\n');
+        
+        let message = `📊 *Daily Stock Reconciliation*\n\n`;
+        message += `📅 Date: ${new Date().toLocaleDateString()}\n\n`;
+        message += `✅ Matched: ${matchedItems} items\n`;
+        message += `⬆️ Over: ${overItems} items\n`;
+        message += `⬇️ Under: ${underItems} items\n\n`;
+        
+        if (overItems > 0) {
+          message += `*Items OVER:*\n${overDetails}\n\n`;
+        }
+        
+        if (underItems > 0) {
+          message += `*Items UNDER:*\n${underDetails}\n`;
+        }
+        
+        await bot.sendNotification(message, 'owner');
+        
+        await storage.updateReconciliation(recon.id, {
+          status: 'sent',
+          sentToOwnerAt: new Date(),
+        });
+      } catch (e) {
+        log(`Failed to send reconciliation to owner: ${e}`);
+      }
+    }
+    
+    return { reconciliation: recon, details };
+  }
+
+  // Helper function to generate Excel for goods receipt
+  async function generateGoodsReceiptExcel(receiptId: string): Promise<string | null> {
+    try {
+      const ExcelJS = require('exceljs');
+      const fs = require('fs');
+      const path = require('path');
+      
+      const receipt = await storage.getGoodsReceipt(receiptId);
+      if (!receipt) return null;
+      
+      const items = await storage.getGoodsReceiptItems(receiptId);
+      
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Goods Receipt');
+      
+      // PosterPOS Add Supply format
+      worksheet.columns = [
+        { header: 'Product Name', key: 'name', width: 30 },
+        { header: 'Quantity', key: 'qty', width: 12 },
+        { header: 'Unit', key: 'unit', width: 12 },
+        { header: 'Cost per Unit', key: 'cost', width: 15 },
+        { header: 'Total Cost', key: 'total', width: 15 },
+        { header: 'Notes', key: 'notes', width: 20 },
+      ];
+      
+      items.forEach(item => {
+        const cost = Number(item.costPerUnit || 0);
+        const qty = Number(item.receivedQuantity || 0);
+        worksheet.addRow({
+          name: item.itemName,
+          qty: qty,
+          unit: item.unit,
+          cost: cost,
+          total: cost * qty,
+          notes: item.notes || '',
+        });
+      });
+      
+      // Style header row
+      worksheet.getRow(1).font = { bold: true };
+      worksheet.getRow(1).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E0E0' },
+      };
+      
+      // Create exports directory if needed
+      const dir = './exports';
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      
+      const filename = `goods_receipt_${receiptId}_${Date.now()}.xlsx`;
+      const filepath = path.join(dir, filename);
+      
+      await workbook.xlsx.writeFile(filepath);
+      
+      return filepath;
+    } catch (error) {
+      log(`Error generating Excel: ${error}`);
+      return null;
+    }
+  }
+
+  // Helper to generate Excel buffer for download
+  async function generateGoodsReceiptExcelBuffer(receiptId: string): Promise<Buffer> {
+    const ExcelJS = require('exceljs');
+    
+    const receipt = await storage.getGoodsReceipt(receiptId);
+    if (!receipt) throw new Error('Receipt not found');
+    
+    const items = await storage.getGoodsReceiptItems(receiptId);
+    
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Goods Receipt');
+    
+    worksheet.columns = [
+      { header: 'Product Name', key: 'name', width: 30 },
+      { header: 'Quantity', key: 'qty', width: 12 },
+      { header: 'Unit', key: 'unit', width: 12 },
+      { header: 'Cost per Unit', key: 'cost', width: 15 },
+      { header: 'Total Cost', key: 'total', width: 15 },
+      { header: 'Notes', key: 'notes', width: 20 },
+    ];
+    
+    items.forEach(item => {
+      const cost = Number(item.costPerUnit || 0);
+      const qty = Number(item.receivedQuantity || 0);
+      worksheet.addRow({
+        name: item.itemName,
+        qty: qty,
+        unit: item.unit,
+        cost: cost,
+        total: cost * qty,
+        notes: item.notes || '',
+      });
+    });
+    
+    worksheet.getRow(1).font = { bold: true };
+    
+    return await workbook.xlsx.writeBuffer();
+  }
+
   // ============ CONFIG STATUS ROUTES ============
   app.get("/api/config/status", async (req, res) => {
     res.json({
