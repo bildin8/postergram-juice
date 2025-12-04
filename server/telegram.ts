@@ -45,130 +45,82 @@ export class TelegramBotService {
             role: 'owner',
             isActive: true,
           });
-          
-          await this.bot.sendMessage(chatId, 
-            '✅ Welcome to PosterPOS Manager!\n\n' +
-            'I can help you:\n' +
-            '📊 /report - View today\'s sales\n' +
-            '📦 /stock - Check inventory levels\n' +
-            '⚠️ /alerts - Get low stock alerts\n' +
-            '📋 /requests - View reorder requests\n\n' +
-            'You\'ll receive real-time notifications for sales and stock alerts.'
-          );
-        } else {
-          await this.bot.sendMessage(chatId, 'Welcome back! Use /help to see available commands.');
         }
+        
+        // Send welcome with Mini App button
+        const webAppUrl = process.env.REPL_SLUG 
+          ? `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER?.toLowerCase()}.repl.co`
+          : process.env.WEBAPP_URL || '';
+          
+        const keyboard: any = {
+          inline_keyboard: []
+        };
+        
+        if (webAppUrl) {
+          keyboard.inline_keyboard.push([
+            { text: '📱 Open Mini App', web_app: { url: webAppUrl } }
+          ]);
+        }
+        
+        keyboard.inline_keyboard.push([
+          { text: '📊 Sales Report', callback_data: 'report' },
+          { text: '📦 Stock Levels', callback_data: 'stock' }
+        ]);
+        keyboard.inline_keyboard.push([
+          { text: '⚠️ Low Stock', callback_data: 'alerts' },
+          { text: '📋 Requests', callback_data: 'requests' }
+        ]);
+        
+        await this.bot.sendMessage(chatId, 
+          '✅ *Welcome to Juicee Manager!*\n\n' +
+          'I\'ll send you real-time notifications for:\n' +
+          '🧾 New receipts and sales\n' +
+          '⚠️ Low stock alerts\n' +
+          '📋 Reorder requests\n\n' +
+          'Use the buttons below or type commands:',
+          { 
+            parse_mode: 'Markdown',
+            reply_markup: keyboard
+          }
+        );
       } catch (error) {
         log(`Error in /start command: ${error}`, 'telegram');
         await this.bot.sendMessage(chatId, 'An error occurred. Please try again later.');
       }
     });
 
-    this.bot.onText(/\/report/, async (msg) => {
-      const chatId = msg.chat.id.toString();
+    // Handle callback queries from inline buttons
+    this.bot.on('callback_query', async (query) => {
+      if (!query.message || !query.data) return;
+      
+      const chatId = query.message.chat.id.toString();
       
       try {
-        const sales = await storage.getTodaysSales();
-        const recentSales = await storage.getAllSalesRecords(10);
-
-        let message = `📊 *Today's Sales Report*\n\n`;
-        message += `💰 Total: $${sales.total.toFixed(2)}\n`;
-        message += `🛒 Transactions: ${sales.count}\n\n`;
-
-        if (recentSales.length > 0) {
-          message += `*Recent Sales:*\n`;
-          recentSales.slice(0, 5).forEach(sale => {
-            const time = new Date(sale.timestamp).toLocaleTimeString('en-US', { 
-              hour: '2-digit', 
-              minute: '2-digit' 
-            });
-            message += `• ${sale.itemName} x${sale.quantity} - $${sale.amount} (${time})\n`;
-          });
+        switch (query.data) {
+          case 'report':
+            await this.handleReport(chatId);
+            break;
+          case 'stock':
+            await this.handleStock(chatId);
+            break;
+          case 'alerts':
+            await this.handleAlerts(chatId);
+            break;
+          case 'requests':
+            await this.handleRequests(chatId);
+            break;
         }
-
-        await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+        await this.bot.answerCallbackQuery(query.id);
       } catch (error) {
-        log(`Error in /report command: ${error}`, 'telegram');
-        await this.bot.sendMessage(chatId, 'Failed to fetch sales report. Please try again.');
+        log(`Error handling callback: ${error}`, 'telegram');
+        await this.bot.answerCallbackQuery(query.id, { text: 'Error occurred' });
       }
     });
 
-    this.bot.onText(/\/stock/, async (msg) => {
-      const chatId = msg.chat.id.toString();
-      
-      try {
-        const inventory = await storage.getAllInventoryItems();
-
-        let message = `📦 *Inventory Status*\n\n`;
-        
-        if (inventory.length === 0) {
-          message += 'No inventory items tracked yet.';
-        } else {
-          inventory.forEach(item => {
-            const stock = Number(item.currentStock);
-            const min = Number(item.minStock);
-            const status = stock <= min ? '⚠️' : '✅';
-            message += `${status} ${item.name}: ${stock} ${item.unit}\n`;
-          });
-        }
-
-        await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-      } catch (error) {
-        log(`Error in /stock command: ${error}`, 'telegram');
-        await this.bot.sendMessage(chatId, 'Failed to fetch inventory. Please try again.');
-      }
-    });
-
-    this.bot.onText(/\/alerts/, async (msg) => {
-      const chatId = msg.chat.id.toString();
-      
-      try {
-        const lowStock = await storage.getLowStockItems();
-
-        let message = `⚠️ *Low Stock Alerts*\n\n`;
-        
-        if (lowStock.length === 0) {
-          message += '✅ All items are well stocked!';
-        } else {
-          lowStock.forEach(item => {
-            message += `• ${item.name}: ${item.currentStock} ${item.unit} (min: ${item.minStock})\n`;
-          });
-        }
-
-        await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-      } catch (error) {
-        log(`Error in /alerts command: ${error}`, 'telegram');
-        await this.bot.sendMessage(chatId, 'Failed to fetch alerts. Please try again.');
-      }
-    });
-
-    this.bot.onText(/\/requests/, async (msg) => {
-      const chatId = msg.chat.id.toString();
-      
-      try {
-        const requests = await storage.getPendingReorderRequests();
-
-        let message = `📋 *Pending Reorder Requests*\n\n`;
-        
-        if (requests.length === 0) {
-          message += 'No pending requests.';
-        } else {
-          requests.forEach(req => {
-            message += `• ${req.itemName} (${req.quantity} ${req.unit})\n`;
-            message += `  Requested by: ${req.requester}\n`;
-            if (req.estimatedCost) {
-              message += `  Cost: $${req.estimatedCost}\n`;
-            }
-            message += `\n`;
-          });
-        }
-
-        await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-      } catch (error) {
-        log(`Error in /requests command: ${error}`, 'telegram');
-        await this.bot.sendMessage(chatId, 'Failed to fetch requests. Please try again.');
-      }
-    });
+    this.bot.onText(/\/report/, (msg) => this.handleReport(msg.chat.id.toString()));
+    this.bot.onText(/\/stock/, (msg) => this.handleStock(msg.chat.id.toString()));
+    this.bot.onText(/\/alerts/, (msg) => this.handleAlerts(msg.chat.id.toString()));
+    this.bot.onText(/\/requests/, (msg) => this.handleRequests(msg.chat.id.toString()));
 
     this.bot.onText(/\/help/, async (msg) => {
       const chatId = msg.chat.id.toString();
@@ -182,6 +134,108 @@ export class TelegramBotService {
         { parse_mode: 'Markdown' }
       );
     });
+  }
+
+  private async handleReport(chatId: string) {
+    try {
+      const sales = await storage.getTodaysSales();
+      const recentSales = await storage.getAllSalesRecords(10);
+
+      let message = `📊 *Today's Sales Report*\n\n`;
+      message += `💰 Total: KES ${sales.total.toFixed(2)}\n`;
+      message += `🛒 Transactions: ${sales.count}\n\n`;
+
+      if (recentSales.length > 0) {
+        message += `*Recent Sales:*\n`;
+        recentSales.slice(0, 5).forEach(sale => {
+          const time = new Date(sale.timestamp).toLocaleTimeString('en-US', { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          });
+          message += `• ${sale.itemName} x${sale.quantity} - KES ${sale.amount} (${time})\n`;
+        });
+      }
+
+      await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    } catch (error) {
+      log(`Error in report: ${error}`, 'telegram');
+      await this.bot.sendMessage(chatId, 'Failed to fetch sales report.');
+    }
+  }
+
+  private async handleStock(chatId: string) {
+    try {
+      const inventory = await storage.getAllInventoryItems();
+      
+      let message = `📦 *Inventory Status*\n\n`;
+      
+      if (inventory.length === 0) {
+        message += 'No inventory items tracked yet.';
+      } else {
+        const sorted = [...inventory].sort((a, b) => Number(a.currentStock) - Number(b.currentStock));
+        sorted.slice(0, 15).forEach(item => {
+          const stock = Number(item.currentStock);
+          const min = Number(item.minStock);
+          const status = stock <= min ? '🔴' : stock <= min * 1.5 ? '🟡' : '🟢';
+          message += `${status} ${item.name}: ${stock} ${item.unit}\n`;
+        });
+        if (inventory.length > 15) {
+          message += `\n_...and ${inventory.length - 15} more items_`;
+        }
+      }
+
+      await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    } catch (error) {
+      log(`Error in stock: ${error}`, 'telegram');
+      await this.bot.sendMessage(chatId, 'Failed to fetch inventory.');
+    }
+  }
+
+  private async handleAlerts(chatId: string) {
+    try {
+      const lowStock = await storage.getLowStockItems();
+
+      let message = `⚠️ *Low Stock Alerts*\n\n`;
+      
+      if (lowStock.length === 0) {
+        message += '✅ All items are well stocked!';
+      } else {
+        lowStock.forEach(item => {
+          message += `🔴 ${item.name}: ${item.currentStock} ${item.unit} (min: ${item.minStock})\n`;
+        });
+      }
+
+      await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    } catch (error) {
+      log(`Error in alerts: ${error}`, 'telegram');
+      await this.bot.sendMessage(chatId, 'Failed to fetch alerts.');
+    }
+  }
+
+  private async handleRequests(chatId: string) {
+    try {
+      const requests = await storage.getPendingReorderRequests();
+
+      let message = `📋 *Pending Reorder Requests*\n\n`;
+      
+      if (requests.length === 0) {
+        message += 'No pending requests.';
+      } else {
+        requests.forEach(req => {
+          message += `• ${req.itemName} (${req.quantity} ${req.unit})\n`;
+          message += `  By: ${req.requester}`;
+          if (req.estimatedCost) {
+            message += ` | KES ${req.estimatedCost}`;
+          }
+          message += `\n\n`;
+        });
+      }
+
+      await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+    } catch (error) {
+      log(`Error in requests: ${error}`, 'telegram');
+      await this.bot.sendMessage(chatId, 'Failed to fetch requests.');
+    }
   }
 
   async sendNotification(message: string, role?: string) {

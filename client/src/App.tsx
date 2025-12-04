@@ -8,6 +8,7 @@ import Settings from "@/pages/Settings";
 import OwnerDashboard from "@/pages/owner/Dashboard";
 import OwnerRequests from "@/pages/owner/Requests";
 import OwnerAnalytics from "@/pages/owner/Analytics";
+import OwnerSales from "@/pages/owner/Sales";
 import StoreInventory from "@/pages/store/Inventory";
 import StoreDespatch from "@/pages/store/Despatch";
 import StoreReorder from "@/pages/store/Reorder";
@@ -24,6 +25,7 @@ function Router() {
       <Route path="/owner" component={OwnerDashboard} />
       <Route path="/owner/requests" component={OwnerRequests} />
       <Route path="/owner/analytics" component={OwnerAnalytics} />
+      <Route path="/owner/sales" component={OwnerSales} />
       
       {/* Store Routes */}
       <Route path="/store" component={StoreInventory} />

@@ -300,9 +300,9 @@ export async function registerRoutes(
           const sale = await storage.createSalesRecord({
             posterPosId,
             itemName: product.product_name,
-            quantity: product.count,
-            amount: product.product_price,
-            timestamp: new Date(transaction.date_close_date),
+            quantity: product.num,
+            amount: product.product_sum.toString(),
+            timestamp: new Date(transaction.date_close),
             syncedAt: new Date(),
           });
           synced.push(sale);
@@ -313,6 +313,118 @@ export async function registerRoutes(
     } catch (error: any) {
       log(`Error syncing sales: ${error.message}`);
       res.status(500).json({ message: error.message || "Failed to sync sales" });
+    }
+  });
+
+  // ============ POSTERPOS WEBHOOK (Real-time receipts) ============
+  app.post("/api/posterpos/webhook", async (req, res) => {
+    try {
+      const { object, action, data } = req.body;
+      log(`PosterPOS webhook: ${object}.${action}`, 'posterpos');
+
+      // Handle transaction events
+      if (object === 'transaction' && (action === 'added' || action === 'closed')) {
+        const transaction = data;
+        
+        // Calculate total
+        let totalAmount = 0;
+        const items: string[] = [];
+        
+        if (transaction.products) {
+          for (const product of transaction.products) {
+            totalAmount += Number(product.product_sum || 0);
+            items.push(product.product_name);
+          }
+        }
+
+        // Send Telegram notification for new sale
+        if (isTelegramBotInitialized()) {
+          try {
+            const bot = getTelegramBot();
+            const itemsList = items.slice(0, 3).join(', ') + (items.length > 3 ? ` +${items.length - 3} more` : '');
+            await bot.sendNotification(
+              `🧾 *New Receipt!*\n` +
+              `Amount: KES ${totalAmount.toFixed(2)}\n` +
+              `Items: ${itemsList}\n` +
+              `Time: ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
+            );
+          } catch (e) {
+            log(`Failed to send receipt notification: ${e}`);
+          }
+        }
+
+        // Store in database
+        if (transaction.products) {
+          for (const product of transaction.products) {
+            const posterPosId = `${transaction.transaction_id}-${product.product_id}`;
+            const existing = await storage.getSalesRecordByPosterPosId(posterPosId);
+            if (!existing) {
+              await storage.createSalesRecord({
+                posterPosId,
+                itemName: product.product_name,
+                quantity: product.num || '1',
+                amount: (product.product_sum || 0).toString(),
+                timestamp: new Date(),
+                syncedAt: new Date(),
+              });
+            }
+          }
+        }
+      }
+
+      // Handle inventory changes
+      if (object === 'storage' || object === 'ingredient') {
+        // Trigger inventory sync on stock changes
+        if (isTelegramBotInitialized()) {
+          try {
+            const bot = getTelegramBot();
+            await bot.sendNotification(`📦 Inventory updated: ${action}`, 'store');
+          } catch (e) {
+            log(`Failed to send inventory notification: ${e}`);
+          }
+        }
+      }
+
+      res.json({ ok: true });
+    } catch (error: any) {
+      log(`PosterPOS webhook error: ${error.message}`);
+      res.status(500).json({ message: "Webhook processing failed" });
+    }
+  });
+
+  // ============ SALES BY DATE RANGE ============
+  app.get("/api/sales/range", async (req, res) => {
+    try {
+      const { from, to } = req.query;
+      
+      let fromDate = from ? new Date(from as string) : new Date();
+      let toDate = to ? new Date(to as string) : new Date();
+      
+      // Default to last 7 days if no dates provided
+      if (!from) {
+        fromDate.setDate(fromDate.getDate() - 7);
+      }
+      
+      // Set end of day for toDate
+      toDate.setHours(23, 59, 59, 999);
+      
+      const sales = await storage.getSalesRecordsSince(fromDate);
+      const filtered = sales.filter(s => new Date(s.timestamp) <= toDate);
+      
+      const total = filtered.reduce((sum, s) => sum + Number(s.amount), 0);
+      
+      res.json({
+        sales: filtered,
+        summary: {
+          total,
+          count: filtered.length,
+          from: fromDate.toISOString(),
+          to: toDate.toISOString(),
+        }
+      });
+    } catch (error: any) {
+      log(`Error fetching sales range: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch sales" });
     }
   });
 
