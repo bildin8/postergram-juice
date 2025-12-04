@@ -12,13 +12,13 @@ export function BottomNav({ role }: BottomNavProps) {
   const links = {
     owner: [
       { href: "/owner", icon: LayoutGrid, label: "Overview" },
-      { href: "/owner/reports", icon: ShoppingCart, label: "Reports" },
-      { href: "/owner/settings", icon: Settings, label: "Settings" },
+      { href: "/owner/analytics", icon: ShoppingCart, label: "Analytics" },
+      { href: "/owner/requests", icon: Settings, label: "Requests" },
     ],
     store: [
       { href: "/store", icon: Package, label: "Inventory" },
       { href: "/store/despatch", icon: ArrowLeft, label: "Despatch" },
-      { href: "/store/reconcile", icon: LayoutGrid, label: "Audit" },
+      { href: "/store/reorder", icon: LayoutGrid, label: "Order" },
     ],
     shop: [
       { href: "/shop", icon: ShoppingCart, label: "POS" },

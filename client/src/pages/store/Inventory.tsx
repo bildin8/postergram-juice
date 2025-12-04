@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Search, Plus, Package, AlertTriangle, ArrowRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Link } from "wouter";
 
 const inventory = [
   { id: 1, name: "Espresso Beans (1kg)", stock: 45, min: 10, status: "good" },
@@ -20,9 +21,11 @@ export default function StoreInventory() {
       <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-md px-6 py-4 border-b space-y-4">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tight text-primary">Store</h1>
-          <Button size="icon" className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90">
-            <Plus className="h-5 w-5" />
-          </Button>
+          <Link href="/store/reorder">
+            <Button size="icon" className="rounded-full bg-primary text-primary-foreground hover:bg-primary/90">
+              <Plus className="h-5 w-5" />
+            </Button>
+          </Link>
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
