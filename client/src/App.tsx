@@ -11,12 +11,14 @@ import StoreInventory from "@/pages/store/Inventory";
 import StoreDespatch from "@/pages/store/Despatch";
 import StoreReorder from "@/pages/store/Reorder";
 import ShopPOS from "@/pages/shop/POS";
+import BotChat from "@/pages/BotChat";
 import NotFound from "@/pages/not-found";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/bot" component={BotChat} />
       
       {/* Owner Routes */}
       <Route path="/owner" component={OwnerDashboard} />

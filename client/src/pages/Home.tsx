@@ -6,6 +6,15 @@ import { Badge } from "@/components/ui/badge";
 export default function Home() {
   const apps = [
     {
+      id: "bot",
+      name: "PosterPOS Bot",
+      description: "Realtime alerts & commands",
+      initial: "🤖",
+      color: "bg-indigo-500",
+      route: "/bot",
+      notifications: 2,
+    },
+    {
       id: "owner",
       name: "Poster Owner",
       description: "Sales analytics & management",
