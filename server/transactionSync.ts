@@ -8,6 +8,22 @@ const SYNC_INTERVAL_MS = 10 * 60 * 1000;
 let lastSyncTimestamp: number | null = null;
 let syncIntervalId: NodeJS.Timeout | null = null;
 
+function parseCloseDate(dateValue: string): Date {
+  if (!dateValue) return new Date();
+  
+  const timestamp = parseInt(dateValue);
+  if (!isNaN(timestamp) && timestamp > 0) {
+    return timestamp > 1e12 ? new Date(timestamp) : new Date(timestamp * 1000);
+  }
+  
+  const date = new Date(dateValue.replace(' ', 'T'));
+  if (!isNaN(date.getTime())) {
+    return date;
+  }
+  
+  return new Date();
+}
+
 export async function syncNewTransactions(): Promise<number> {
   if (!isPosterPOSInitialized()) {
     log('PosterPOS not initialized, skipping sync', 'transaction-sync');
@@ -36,20 +52,23 @@ export async function syncNewTransactions(): Promise<number> {
     let maxCloseTimestamp = lastSyncTimestamp || 0;
     
     for (const transaction of transactions) {
-      const closeTimestamp = Math.floor(new Date(transaction.date_close).getTime() / 1000);
+      const closeDate = parseCloseDate(transaction.date_close);
+      const closeTimestamp = Math.floor(closeDate.getTime() / 1000);
       if (closeTimestamp > maxCloseTimestamp) {
         maxCloseTimestamp = closeTimestamp;
       }
       
-      const transactionId = transaction.transaction_id;
-      const existing = await storage.getSalesRecordByPosterPosId(transactionId);
+      const products = transaction.products || [];
+      if (products.length === 0) continue;
+      
+      const firstProductId = `${transaction.transaction_id}-${products[0].product_id}`;
+      const existing = await storage.getSalesRecordByPosterPosId(firstProductId);
       
       if (existing) {
         continue;
       }
       
       const total = parseFloat(transaction.payed_sum || transaction.sum || '0');
-      const products = transaction.products || [];
       
       await sendTransactionNotification(transaction, total, products);
       notifiedCount++;
@@ -90,13 +109,14 @@ function formatReceiptMessage(
   total: number, 
   products: any[]
 ): string {
-  const time = new Date(transaction.date_close).toLocaleTimeString('en-US', { 
+  const closeDate = parseCloseDate(transaction.date_close);
+  const time = closeDate.toLocaleTimeString('en-US', { 
     hour: '2-digit', 
     minute: '2-digit',
     hour12: true
   });
   
-  const date = new Date(transaction.date_close).toLocaleDateString('en-US', {
+  const date = closeDate.toLocaleDateString('en-US', {
     day: 'numeric',
     month: 'short'
   });
@@ -133,6 +153,8 @@ async function storeTransactionProducts(
   products: any[]
 ): Promise<void> {
   try {
+    const closeDate = parseCloseDate(transaction.date_close);
+    
     for (const product of products) {
       const posterPosId = `${transaction.transaction_id}-${product.product_id}`;
       
@@ -144,7 +166,7 @@ async function storeTransactionProducts(
         itemName: `Product #${product.product_id}`,
         quantity: product.num || '1',
         amount: (product.payed_sum || product.product_price || 0).toString(),
-        timestamp: new Date(transaction.date_close),
+        timestamp: closeDate,
         syncedAt: new Date(),
       });
     }
