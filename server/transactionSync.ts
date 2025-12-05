@@ -121,6 +121,8 @@ function formatReceiptMessage(
     month: 'short'
   });
   
+  const displayTotal = total / 100;
+  
   let message = `🧾 *Receipt #${transaction.transaction_id}*\n`;
   message += `📅 ${date} at ${time}\n\n`;
   
@@ -128,13 +130,13 @@ function formatReceiptMessage(
     message += `*Items:*\n`;
     products.forEach((product, index) => {
       const qty = parseFloat(product.num || '1');
-      const price = (product.payed_sum || product.product_price || 0);
-      message += `• x${qty} - KES ${price}\n`;
+      const price = (product.payed_sum || product.product_price || 0) / 100;
+      message += `• x${qty} - KES ${price.toFixed(2)}\n`;
     });
     message += `\n`;
   }
   
-  message += `💰 *Total: KES ${total.toFixed(2)}*\n`;
+  message += `💰 *Total: KES ${displayTotal.toFixed(2)}*\n`;
   
   const payType = transaction.pay_type === '0' ? 'Cash' : 
                   transaction.pay_type === '1' ? 'Card' : 
@@ -161,11 +163,14 @@ async function storeTransactionProducts(
       const existing = await storage.getSalesRecordByPosterPosId(posterPosId);
       if (existing) continue;
       
+      const amountInCents = product.payed_sum || product.product_price || 0;
+      const amountInKES = (amountInCents / 100).toFixed(2);
+      
       await storage.createSalesRecord({
         posterPosId,
         itemName: `Product #${product.product_id}`,
         quantity: product.num || '1',
-        amount: (product.payed_sum || product.product_price || 0).toString(),
+        amount: amountInKES,
         timestamp: closeDate,
         syncedAt: new Date(),
       });
