@@ -4,8 +4,9 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { z } from "zod";
 import { insertInventoryItemSchema, insertSalesRecordSchema, insertDespatchLogSchema, insertReorderRequestSchema } from "@shared/schema";
-import { initPosterPOSClient, getPosterPOSClient } from "./posterpos";
+import { initPosterPOSClient, getPosterPOSClient, isPosterPOSInitialized } from "./posterpos";
 import { initTelegramBot, getTelegramBot, isTelegramBotInitialized } from "./telegram";
+import { startTransactionSync, syncNewTransactions, getLastSyncTimestamp } from "./transactionSync";
 import { log } from "./index";
 
 export async function registerRoutes(
@@ -37,6 +38,12 @@ export async function registerRoutes(
     } catch (error) {
       log(`Failed to initialize Telegram bot: ${error}`);
     }
+  }
+
+  // Start background transaction sync (10-minute polling)
+  if (posterEndpoint && posterToken && telegramToken) {
+    startTransactionSync();
+    log('Transaction sync started (10-minute interval)');
   }
 
   // ============ INVENTORY ROUTES ============
@@ -337,15 +344,14 @@ export async function registerRoutes(
         for (const product of transaction.products) {
           const posterPosId = `${transaction.transaction_id}-${product.product_id}`;
           
-          // Check if already synced to avoid duplicates
           const existing = await storage.getSalesRecordByPosterPosId(posterPosId);
           if (existing) continue;
           
           const sale = await storage.createSalesRecord({
             posterPosId,
-            itemName: product.product_name,
+            itemName: `Product #${product.product_id}`,
             quantity: product.num || '1',
-            amount: (product.product_sum || 0).toString(),
+            amount: (product.payed_sum || product.product_price || 0).toString(),
             timestamp: new Date(transaction.date_close),
             syncedAt: new Date(),
           });
@@ -358,6 +364,41 @@ export async function registerRoutes(
       log(`Error syncing sales: ${error.message}`);
       res.status(500).json({ message: error.message || "Failed to sync sales" });
     }
+  });
+
+  // Manual trigger for transaction sync (posts new receipts to Sales channel)
+  app.post("/api/posterpos/sync/transactions", async (req, res) => {
+    try {
+      if (!isPosterPOSInitialized()) {
+        res.status(503).json({ message: "PosterPOS not configured" });
+        return;
+      }
+      
+      const count = await syncNewTransactions();
+      const lastSync = getLastSyncTimestamp();
+      
+      res.json({ 
+        message: `Synced ${count} new transactions`,
+        notified: count,
+        lastSyncTimestamp: lastSync,
+        lastSyncTime: lastSync ? new Date(lastSync * 1000).toISOString() : null,
+      });
+    } catch (error: any) {
+      log(`Error in manual transaction sync: ${error.message}`);
+      res.status(500).json({ message: error.message || "Failed to sync transactions" });
+    }
+  });
+
+  // Get sync status
+  app.get("/api/posterpos/sync/status", async (req, res) => {
+    const lastSync = getLastSyncTimestamp();
+    res.json({
+      posterPosConfigured: isPosterPOSInitialized(),
+      telegramConfigured: isTelegramBotInitialized(),
+      lastSyncTimestamp: lastSync,
+      lastSyncTime: lastSync ? new Date(lastSync * 1000).toISOString() : null,
+      syncInterval: '10 minutes',
+    });
   });
 
   // ============ INGREDIENT MOVEMENTS ============
