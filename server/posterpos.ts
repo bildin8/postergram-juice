@@ -9,18 +9,37 @@ export interface PosterPOSProduct {
   out?: number;
 }
 
+export interface PosterPOSTransactionProduct {
+  product_id: number;
+  modification_id?: number;
+  product_price: number;
+  num: string;
+  payed_sum: number;
+  product_cost?: number;
+  product_profit?: number;
+}
+
 export interface PosterPOSTransaction {
-  incoming_order_id?: number;
-  transaction_id: number;
+  transaction_id: string;
+  date_start: string;
   date_close: string;
-  sum: number;
-  payed_sum?: number;
-  products: {
-    product_id: number;
-    product_name: string;
-    num: string;
-    product_sum: number;
-  }[];
+  status: string;
+  guests_count: string;
+  discount: string;
+  pay_type: string;
+  payed_cash: string;
+  payed_card: string;
+  payed_sum: string;
+  sum: string;
+  spot_id: string;
+  table_id: string;
+  name: string;
+  user_id: string;
+  client_id: string;
+  total_profit: string;
+  table_name: string;
+  date_close_date: string;
+  products?: PosterPOSTransactionProduct[];
 }
 
 export interface PosterPOSIngredient {
@@ -136,14 +155,26 @@ export class PosterPOSClient {
     }
   }
 
-  async getTransactions(dateFrom?: string, dateTo?: string): Promise<PosterPOSTransaction[]> {
-    // Poster uses YYYYMMDD format for dates
+  async getTransactions(options?: {
+    dateFrom?: string;
+    dateTo?: string;
+    afterDateClose?: number;
+    status?: number;
+    includeProducts?: boolean;
+  }): Promise<PosterPOSTransaction[]> {
     try {
-      const params: Record<string, string> = {};
-      if (dateFrom) params.date_from = dateFrom;
-      if (dateTo) params.date_to = dateTo;
+      const params: Record<string, string> = {
+        include_products: 'true',
+        status: '2',
+      };
       
-      const response = await this.request('finance.getTransactions', params);
+      if (options?.dateFrom) params.dateFrom = options.dateFrom;
+      if (options?.dateTo) params.dateTo = options.dateTo;
+      if (options?.afterDateClose) params.after_date_close = options.afterDateClose.toString();
+      if (options?.status !== undefined) params.status = options.status.toString();
+      if (options?.includeProducts !== undefined) params.include_products = options.includeProducts ? 'true' : 'false';
+      
+      const response = await this.request('dash.getTransactions', params);
       return response.response || [];
     } catch (error) {
       log(`Failed to get transactions: ${error}`, 'posterpos');
@@ -153,7 +184,7 @@ export class PosterPOSClient {
 
   async getTodaysTransactions(): Promise<PosterPOSTransaction[]> {
     const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
-    return this.getTransactions(today, today);
+    return this.getTransactions({ dateFrom: today, dateTo: today });
   }
 
   async getRecentTransactions(days: number = 7): Promise<PosterPOSTransaction[]> {
@@ -164,7 +195,11 @@ export class PosterPOSClient {
     const dateFrom = from.toISOString().split('T')[0].replace(/-/g, '');
     const dateTo = to.toISOString().split('T')[0].replace(/-/g, '');
     
-    return this.getTransactions(dateFrom, dateTo);
+    return this.getTransactions({ dateFrom, dateTo });
+  }
+
+  async getTransactionsSince(afterTimestamp: number): Promise<PosterPOSTransaction[]> {
+    return this.getTransactions({ afterDateClose: afterTimestamp });
   }
 
   async getSalesReport(): Promise<any> {
