@@ -3,8 +3,8 @@ import { MobileShell } from "@/components/layout/MobileShell";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Calendar, Package, TrendingDown, Loader2 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { Calendar, Package, TrendingDown, Loader2, RefreshCw } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, subDays, startOfDay, endOfDay } from "date-fns";
 
 type DateRange = "today" | "yesterday" | "week" | "month";
@@ -30,6 +30,17 @@ interface UsageResponse {
 
 export default function OwnerUsage() {
   const [dateRange, setDateRange] = useState<DateRange>("today");
+  const [isSyncing, setIsSyncing] = useState(false);
+  const queryClient = useQueryClient();
+
+  const handleSync = async () => {
+    setIsSyncing(true);
+    try {
+      await queryClient.invalidateQueries({ queryKey: ["/api/usage"] });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const getDateParams = () => {
     const now = new Date();
@@ -69,9 +80,20 @@ export default function OwnerUsage() {
   return (
     <MobileShell theme="owner" className="pb-20">
       <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-md px-6 py-4 border-b">
-        <h1 className="text-xl font-bold tracking-tight text-primary" data-testid="text-page-title">
-          Ingredient Usage
-        </h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-bold tracking-tight text-primary" data-testid="text-page-title">
+            Ingredient Usage
+          </h1>
+          <Button 
+            variant="ghost" 
+            size="icon" 
+            onClick={handleSync}
+            disabled={isSyncing || isLoading}
+            data-testid="button-sync"
+          >
+            <RefreshCw className={`h-5 w-5 ${isSyncing ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
       </header>
 
       <main className="p-4 space-y-4">

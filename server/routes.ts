@@ -493,24 +493,36 @@ export async function registerRoutes(
         dateTo = new Date().toISOString().split('T')[0].replace(/-/g, '');
       }
       
-      // Type 1 = write-offs/usage in PosterPOS
-      const movements = await client.getIngredientMovements(dateFrom, dateTo, 1);
+      // No type filter - get all movements and filter for write_offs
+      const movements = await client.getIngredientMovements(dateFrom, dateTo);
       
-      // Filter to only ingredients with actual usage
+      log(`Usage API: Got ${movements.length} ingredients for ${dateFrom} to ${dateTo}`);
+      
+      // Filter to only ingredients with POSITIVE write_offs (expense/usage)
+      // Ignore negative values which are corrections/reversals
       const usage = movements
-        .filter(m => m.write_offs > 0)
-        .map(m => ({
-          id: m.ingredient_id,
-          name: m.ingredient_name,
-          quantity: m.write_offs,
-          unit: '', // Unit from PosterPOS not in this response
-          costPerUnit: m.cost_end / 100, // Convert from cents
-          totalCost: (m.write_offs * m.cost_end) / 100,
-        }))
+        .filter(m => {
+          const writeOff = Number(m.write_offs) || 0;
+          return writeOff > 0;
+        })
+        .map(m => {
+          const writeOff = Math.abs(Number(m.write_offs) || 0);
+          const costEnd = Number(m.cost_end) || 0;
+          return {
+            id: m.ingredient_id,
+            name: m.ingredient_name,
+            quantity: writeOff,
+            unit: '',
+            costPerUnit: costEnd / 100,
+            totalCost: (writeOff * costEnd) / 100,
+          };
+        })
         .sort((a, b) => b.totalCost - a.totalCost);
       
       const totalCost = usage.reduce((sum, u) => sum + u.totalCost, 0);
       const totalItems = usage.length;
+      
+      log(`Usage API: Filtered to ${totalItems} ingredients with usage, total cost: ${totalCost.toFixed(2)}`);
       
       res.json({
         usage,
