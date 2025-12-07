@@ -539,6 +539,124 @@ export async function registerRoutes(
     }
   });
 
+  // Real-time ingredient usage based on transactions and recipes
+  app.get("/api/realtime-usage", async (req, res) => {
+    try {
+      const client = getPosterPOSClient();
+      const { from, to } = req.query;
+      
+      let dateFrom: string;
+      let dateTo: string;
+      
+      if (from) {
+        dateFrom = new Date(from as string).toISOString().split('T')[0].replace(/-/g, '');
+      } else {
+        dateFrom = new Date().toISOString().split('T')[0].replace(/-/g, '');
+      }
+      
+      if (to) {
+        dateTo = new Date(to as string).toISOString().split('T')[0].replace(/-/g, '');
+      } else {
+        dateTo = new Date().toISOString().split('T')[0].replace(/-/g, '');
+      }
+      
+      log(`Realtime usage: Fetching transactions from ${dateFrom} to ${dateTo}`);
+      
+      // Get transactions for the date range
+      const transactions = await client.getTransactions({ dateFrom, dateTo });
+      
+      log(`Realtime usage: Got ${transactions.length} transactions`);
+      
+      // Build a map of product recipes (cached per request)
+      const recipeCache: Map<string, any> = new Map();
+      
+      // Aggregate ingredient usage from all transactions
+      const ingredientUsage: Map<string, { 
+        id: string; 
+        name: string; 
+        quantity: number; 
+        unit: string;
+        productsSold: Map<string, { name: string; count: number }>;
+      }> = new Map();
+      
+      let totalProductsSold = 0;
+      
+      for (const transaction of transactions) {
+        if (!transaction.products || transaction.products.length === 0) continue;
+        
+        for (const product of transaction.products) {
+          const productId = product.product_id.toString();
+          const quantitySold = parseFloat(product.num) || 1;
+          totalProductsSold += quantitySold;
+          
+          // Get recipe for this product (cached)
+          let recipe = recipeCache.get(productId);
+          if (!recipe) {
+            recipe = await client.getProductWithRecipe(productId);
+            if (recipe) {
+              recipeCache.set(productId, recipe);
+            }
+          }
+          
+          if (recipe && recipe.ingredients && recipe.ingredients.length > 0) {
+            for (const ingredient of recipe.ingredients) {
+              const ingredientId = ingredient.ingredient_id;
+              const usageAmount = (ingredient.structure_netto || ingredient.structure_brutto) * quantitySold;
+              
+              const existing = ingredientUsage.get(ingredientId);
+              if (existing) {
+                existing.quantity += usageAmount;
+                const productEntry = existing.productsSold.get(productId);
+                if (productEntry) {
+                  productEntry.count += quantitySold;
+                } else {
+                  existing.productsSold.set(productId, { name: recipe.product_name, count: quantitySold });
+                }
+              } else {
+                const productsSold = new Map<string, { name: string; count: number }>();
+                productsSold.set(productId, { name: recipe.product_name, count: quantitySold });
+                ingredientUsage.set(ingredientId, {
+                  id: ingredientId,
+                  name: ingredient.ingredient_name,
+                  quantity: usageAmount,
+                  unit: ingredient.structure_unit || ingredient.ingredient_unit || '',
+                  productsSold,
+                });
+              }
+            }
+          }
+        }
+      }
+      
+      // Convert to array and sort by quantity
+      const usage = Array.from(ingredientUsage.values())
+        .map(item => ({
+          id: item.id,
+          name: item.name,
+          quantity: item.quantity,
+          unit: item.unit,
+          products: Array.from(item.productsSold.values()),
+        }))
+        .sort((a, b) => b.quantity - a.quantity);
+      
+      log(`Realtime usage: Found ${usage.length} ingredients used across ${transactions.length} transactions`);
+      
+      res.json({
+        usage,
+        summary: {
+          totalIngredients: usage.length,
+          totalTransactions: transactions.length,
+          totalProductsSold,
+          from: from || new Date().toISOString(),
+          to: to || new Date().toISOString(),
+        }
+      });
+    } catch (error: any) {
+      log(`Error fetching realtime usage: ${error.message}`);
+      res.status(500).json({ message: error.message || "Failed to fetch realtime usage data" });
+    }
+  });
+
   // ============ POSTERPOS WEBHOOK (Real-time receipts) ============
   app.post("/api/posterpos/webhook", async (req, res) => {
     try {

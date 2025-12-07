@@ -237,6 +237,52 @@ export class PosterPOSClient {
     
     return this.getIngredientMovements(dateFrom, dateTo);
   }
+
+  async getProductWithRecipe(productId: string): Promise<ProductWithRecipe | null> {
+    try {
+      const response = await this.request('menu.getProduct', { product_id: productId });
+      if (!response.response) return null;
+      
+      const product = response.response;
+      return {
+        product_id: product.product_id,
+        product_name: product.product_name,
+        type: product.type,
+        ingredients: product.ingredients?.map((ing: any) => ({
+          structure_id: ing.structure_id,
+          ingredient_id: ing.ingredient_id,
+          ingredient_name: ing.ingredient_name,
+          structure_brutto: parseFloat(ing.structure_brutto) || 0,
+          structure_netto: parseFloat(ing.structure_netto) || 0,
+          structure_unit: ing.structure_unit || ing.ingredient_unit,
+          ingredient_unit: ing.ingredient_unit,
+        })) || [],
+      };
+    } catch (error) {
+      log(`Failed to get product recipe for ${productId}: ${error}`, 'posterpos');
+      return null;
+    }
+  }
+
+  async getAllProductsWithRecipes(): Promise<ProductWithRecipe[]> {
+    try {
+      const products = await this.getProducts();
+      const recipesMap: ProductWithRecipe[] = [];
+      
+      for (const product of products) {
+        const productWithRecipe = await this.getProductWithRecipe(product.product_id.toString());
+        if (productWithRecipe && productWithRecipe.ingredients && productWithRecipe.ingredients.length > 0) {
+          recipesMap.push(productWithRecipe);
+        }
+      }
+      
+      log(`Fetched recipes for ${recipesMap.length} products with ingredients`, 'posterpos');
+      return recipesMap;
+    } catch (error) {
+      log(`Failed to get all product recipes: ${error}`, 'posterpos');
+      return [];
+    }
+  }
 }
 
 export interface IngredientMovement {
@@ -248,6 +294,23 @@ export interface IngredientMovement {
   income: number;
   write_offs: number;
   end: number;
+}
+
+export interface ProductRecipeIngredient {
+  structure_id: string;
+  ingredient_id: string;
+  ingredient_name: string;
+  structure_brutto: number;
+  structure_netto: number;
+  structure_unit: string;
+  ingredient_unit: string;
+}
+
+export interface ProductWithRecipe {
+  product_id: string;
+  product_name: string;
+  type: string;
+  ingredients?: ProductRecipeIngredient[];
 }
 
 // Singleton instance
