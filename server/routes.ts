@@ -548,13 +548,18 @@ export async function registerRoutes(
       let dateFrom: string;
       let dateTo: string;
       
-      if (from) {
+      // Frontend now sends dates in YYYYMMDD format directly (local timezone)
+      if (from && /^\d{8}$/.test(from as string)) {
+        dateFrom = from as string;
+      } else if (from) {
         dateFrom = new Date(from as string).toISOString().split('T')[0].replace(/-/g, '');
       } else {
         dateFrom = new Date().toISOString().split('T')[0].replace(/-/g, '');
       }
       
-      if (to) {
+      if (to && /^\d{8}$/.test(to as string)) {
+        dateTo = to as string;
+      } else if (to) {
         dateTo = new Date(to as string).toISOString().split('T')[0].replace(/-/g, '');
       } else {
         dateTo = new Date().toISOString().split('T')[0].replace(/-/g, '');
@@ -631,8 +636,25 @@ export async function registerRoutes(
               }
             }
             
+            // Debug: Log info for Pure & Simple to understand modifier structure
+            if (recipe.product_name?.toLowerCase().includes('pure') || recipe.product_name?.toLowerCase().includes('simple')) {
+              log(`DEBUG Pure&Simple: product_id=${productId}, product_name=${recipe.product_name}`);
+              log(`DEBUG Pure&Simple: tx_modifications=${JSON.stringify(product.modifications || 'NONE')}`);
+              log(`DEBUG Pure&Simple: recipe_group_modifications=${recipe.group_modifications?.length || 0} groups`);
+              if (recipe.group_modifications) {
+                for (const g of recipe.group_modifications) {
+                  log(`DEBUG Pure&Simple:   Group "${g.name}": ${g.modifications.length} mods`);
+                  for (const m of g.modifications) {
+                    log(`DEBUG Pure&Simple:     Mod id=${m.dish_modification_id}, name=${m.name}, type=${m.type}, ing_id=${m.ingredient_id}, brutto=${m.brutto}`);
+                  }
+                }
+              }
+            }
+            
             // Process modifiers (ingredient choices) from the transaction
-            if (product.modifications && Array.isArray(product.modifications) && recipe.group_modifications) {
+            if (product.modifications && Array.isArray(product.modifications)) {
+              if (!recipe.group_modifications) continue;
+              
               for (const txMod of product.modifications) {
                 const modId = txMod.dish_modification_id || txMod.modification_id;
                 if (!modId) continue;
@@ -649,9 +671,8 @@ export async function registerRoutes(
                       const modQty = parseFloat(txMod.num || '1') || 1;
                       const modKey = `${productId}-mod-${modId}`;
                       
-                      // Type 10 = ingredient modifier, Type 1 = product as ingredient
-                      // Type 2/3 = dish/product modifier (needs recipe lookup)
-                      if (mod.ingredient_id && (mod.type === '10' || mod.type === '1')) {
+                      // Process ANY modifier that has an ingredient_id (regardless of type)
+                      if (mod.ingredient_id) {
                         // Direct ingredient modifier - use netto with brutto fallback
                         const usageAmount = (mod.netto || mod.brutto) * modQty * quantitySold;
                         
@@ -677,9 +698,11 @@ export async function registerRoutes(
                             });
                           }
                         }
-                      } else if (mod.type === '2' || mod.type === '3') {
-                        // Modifier references another product/dish - fetch its recipe
-                        const modProductId = mod.product_id || mod.ingredient_id;
+                      }
+                      
+                      // Also check if modifier references a product/dish (type 2/3) that needs recipe lookup
+                      if ((mod.type === '2' || mod.type === '3') && (mod.product_id || (!mod.ingredient_id && mod.product_id))) {
+                        const modProductId = mod.product_id;
                         if (modProductId) {
                           let modRecipe = recipeCache.get(modProductId);
                           if (!modRecipe) {
@@ -750,6 +773,76 @@ export async function registerRoutes(
     } catch (error: any) {
       log(`Error fetching realtime usage: ${error.message}`);
       res.status(500).json({ message: error.message || "Failed to fetch realtime usage data" });
+    }
+  });
+
+  // Debug endpoint to inspect product recipes and modifiers
+  app.get("/api/debug/product/:productId", async (req, res) => {
+    try {
+      const client = getPosterPOSClient();
+      const { productId } = req.params;
+      
+      // Get the product recipe
+      const recipe = await client.getProductWithRecipe(productId);
+      
+      if (!recipe) {
+        return res.status(404).json({ message: "Product not found" });
+      }
+      
+      // Get recent transactions that include this product
+      const today = new Date();
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      
+      const dateFrom = weekAgo.toISOString().split('T')[0].replace(/-/g, '');
+      const dateTo = today.toISOString().split('T')[0].replace(/-/g, '');
+      
+      const transactions = await client.getTransactions({ dateFrom, dateTo });
+      
+      // Filter transactions that contain this product
+      const productTransactions = transactions
+        .filter(tx => tx.products?.some(p => p.product_id.toString() === productId))
+        .slice(0, 10) // Limit to 10 most recent
+        .map(tx => ({
+          transaction_id: tx.transaction_id,
+          date_close: tx.date_close,
+          products: tx.products?.filter(p => p.product_id.toString() === productId).map(p => ({
+            product_id: p.product_id,
+            num: p.num,
+            modifications: p.modifications,
+          })),
+        }));
+      
+      res.json({
+        recipe: {
+          product_id: recipe.product_id,
+          product_name: recipe.product_name,
+          ingredients: recipe.ingredients,
+          group_modifications: recipe.group_modifications,
+        },
+        recentTransactions: productTransactions,
+        summary: {
+          totalTransactionsWithProduct: productTransactions.length,
+          hasIngredients: (recipe.ingredients?.length || 0) > 0,
+          hasModifiers: (recipe.group_modifications?.length || 0) > 0,
+          modifierGroups: recipe.group_modifications?.map(g => ({
+            name: g.name,
+            modifierCount: g.modifications.length,
+            modifiers: g.modifications.map(m => ({
+              id: m.dish_modification_id,
+              name: m.name,
+              type: m.type,
+              ingredient_id: m.ingredient_id,
+              product_id: m.product_id,
+              brutto: m.brutto,
+              netto: m.netto,
+            })),
+          })),
+        },
+      });
+    } catch (error: any) {
+      log(`Error debugging product: ${error.message}`);
+      res.status(500).json({ message: error.message || "Failed to debug product" });
     }
   });
 

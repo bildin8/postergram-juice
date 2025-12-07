@@ -58,18 +58,25 @@ export default function OwnerUsage() {
     setExpandedItems(newExpanded);
   };
 
+  const formatLocalDate = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}${month}${day}`;
+  };
+
   const getDateParams = () => {
     const now = new Date();
     switch (dateRange) {
       case "today":
-        return { from: startOfDay(now).toISOString(), to: endOfDay(now).toISOString() };
+        return { from: formatLocalDate(now), to: formatLocalDate(now) };
       case "yesterday":
         const yesterday = subDays(now, 1);
-        return { from: startOfDay(yesterday).toISOString(), to: endOfDay(yesterday).toISOString() };
+        return { from: formatLocalDate(yesterday), to: formatLocalDate(yesterday) };
       case "week":
-        return { from: startOfDay(subDays(now, 7)).toISOString(), to: endOfDay(now).toISOString() };
+        return { from: formatLocalDate(subDays(now, 7)), to: formatLocalDate(now) };
       case "month":
-        return { from: startOfDay(subDays(now, 30)).toISOString(), to: endOfDay(now).toISOString() };
+        return { from: formatLocalDate(subDays(now, 30)), to: formatLocalDate(now) };
     }
   };
 
