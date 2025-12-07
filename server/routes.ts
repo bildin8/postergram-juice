@@ -472,6 +472,61 @@ export async function registerRoutes(
     }
   });
 
+  // Ingredient usage endpoint for Owner Usage page
+  app.get("/api/usage", async (req, res) => {
+    try {
+      const client = getPosterPOSClient();
+      const { from, to } = req.query;
+      
+      let dateFrom: string;
+      let dateTo: string;
+      
+      if (from) {
+        dateFrom = new Date(from as string).toISOString().split('T')[0].replace(/-/g, '');
+      } else {
+        dateFrom = new Date().toISOString().split('T')[0].replace(/-/g, '');
+      }
+      
+      if (to) {
+        dateTo = new Date(to as string).toISOString().split('T')[0].replace(/-/g, '');
+      } else {
+        dateTo = new Date().toISOString().split('T')[0].replace(/-/g, '');
+      }
+      
+      // Type 1 = write-offs/usage in PosterPOS
+      const movements = await client.getIngredientMovements(dateFrom, dateTo, 1);
+      
+      // Filter to only ingredients with actual usage
+      const usage = movements
+        .filter(m => m.write_offs > 0)
+        .map(m => ({
+          id: m.ingredient_id,
+          name: m.ingredient_name,
+          quantity: m.write_offs,
+          unit: '', // Unit from PosterPOS not in this response
+          costPerUnit: m.cost_end / 100, // Convert from cents
+          totalCost: (m.write_offs * m.cost_end) / 100,
+        }))
+        .sort((a, b) => b.totalCost - a.totalCost);
+      
+      const totalCost = usage.reduce((sum, u) => sum + u.totalCost, 0);
+      const totalItems = usage.length;
+      
+      res.json({
+        usage,
+        summary: {
+          totalCost,
+          totalItems,
+          from: from || new Date().toISOString(),
+          to: to || new Date().toISOString(),
+        }
+      });
+    } catch (error: any) {
+      log(`Error fetching usage: ${error.message}`);
+      res.status(500).json({ message: error.message || "Failed to fetch usage data" });
+    }
+  });
+
   // ============ POSTERPOS WEBHOOK (Real-time receipts) ============
   app.post("/api/posterpos/webhook", async (req, res) => {
     try {
