@@ -17,6 +17,11 @@ export interface PosterPOSTransactionProduct {
   payed_sum: number;
   product_cost?: number;
   product_profit?: number;
+  modifications?: Array<{
+    dish_modification_id: string;
+    modification_id?: string;
+    num?: string;
+  }>;
 }
 
 export interface PosterPOSTransaction {
@@ -244,7 +249,8 @@ export class PosterPOSClient {
       if (!response.response) return null;
       
       const product = response.response;
-      return {
+      
+      const result: ProductWithRecipe = {
         product_id: product.product_id,
         product_name: product.product_name,
         type: product.type,
@@ -258,6 +264,27 @@ export class PosterPOSClient {
           ingredient_unit: ing.ingredient_unit,
         })) || [],
       };
+      
+      // Parse group modifications (ingredient choices)
+      if (product.group_modifications && Array.isArray(product.group_modifications)) {
+        result.group_modifications = product.group_modifications.map((group: any) => ({
+          dish_modification_group_id: group.dish_modification_group_id,
+          name: group.name,
+          modifications: (group.modifications || []).map((mod: any) => ({
+            dish_modification_id: mod.dish_modification_id,
+            name: mod.name,
+            ingredient_id: mod.ingredient_id,
+            product_id: mod.product_id || mod.dish_id,
+            type: mod.type,
+            brutto: parseFloat(mod.brutto) || 0,
+            netto: parseFloat(mod.netto) || 0,
+            ingredient_name: mod.name,
+            ingredient_unit: mod.ingredient_unit || '',
+          })),
+        }));
+      }
+      
+      return result;
     } catch (error) {
       log(`Failed to get product recipe for ${productId}: ${error}`, 'posterpos');
       return null;
@@ -306,11 +333,30 @@ export interface ProductRecipeIngredient {
   ingredient_unit: string;
 }
 
+export interface ProductModification {
+  dish_modification_id: string;
+  name: string;
+  ingredient_id?: string;
+  product_id?: string;
+  type: string;
+  brutto: number;
+  netto: number;
+  ingredient_name?: string;
+  ingredient_unit?: string;
+}
+
+export interface ProductModificationGroup {
+  dish_modification_group_id: string;
+  name: string;
+  modifications: ProductModification[];
+}
+
 export interface ProductWithRecipe {
   product_id: string;
   product_name: string;
   type: string;
   ingredients?: ProductRecipeIngredient[];
+  group_modifications?: ProductModificationGroup[];
 }
 
 // Singleton instance
