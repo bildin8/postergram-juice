@@ -3,26 +3,31 @@ import { MobileShell } from "@/components/layout/MobileShell";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Calendar, Package, TrendingDown, Loader2, RefreshCw } from "lucide-react";
+import { Calendar, Package, Loader2, RefreshCw, ChevronDown, ChevronUp } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { format, subDays, startOfDay, endOfDay } from "date-fns";
+import { subDays, startOfDay, endOfDay } from "date-fns";
 
 type DateRange = "today" | "yesterday" | "week" | "month";
+
+interface ProductUsage {
+  name: string;
+  count: number;
+}
 
 interface UsageItem {
   id: string;
   name: string;
   quantity: number;
   unit: string;
-  costPerUnit: number;
-  totalCost: number;
+  products: ProductUsage[];
 }
 
 interface UsageResponse {
   usage: UsageItem[];
   summary: {
-    totalCost: number;
-    totalItems: number;
+    totalIngredients: number;
+    totalTransactions: number;
+    totalProductsSold: number;
     from: string;
     to: string;
   };
@@ -31,15 +36,26 @@ interface UsageResponse {
 export default function OwnerUsage() {
   const [dateRange, setDateRange] = useState<DateRange>("today");
   const [isSyncing, setIsSyncing] = useState(false);
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
 
   const handleSync = async () => {
     setIsSyncing(true);
     try {
-      await queryClient.invalidateQueries({ queryKey: ["/api/usage"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/realtime-usage"] });
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  const toggleExpand = (id: string) => {
+    const newExpanded = new Set(expandedItems);
+    if (newExpanded.has(id)) {
+      newExpanded.delete(id);
+    } else {
+      newExpanded.add(id);
+    }
+    setExpandedItems(newExpanded);
   };
 
   const getDateParams = () => {
@@ -59,10 +75,10 @@ export default function OwnerUsage() {
 
   const params = getDateParams();
   
-  const { data, isLoading } = useQuery<UsageResponse>({
-    queryKey: ["/api/usage", params.from, params.to],
+  const { data, isLoading, isFetching } = useQuery<UsageResponse>({
+    queryKey: ["/api/realtime-usage", params.from, params.to],
     queryFn: async () => {
-      const res = await fetch(`/api/usage?from=${params.from}&to=${params.to}`);
+      const res = await fetch(`/api/realtime-usage?from=${params.from}&to=${params.to}`);
       if (!res.ok) throw new Error("Failed to fetch usage");
       return res.json();
     },
@@ -77,6 +93,13 @@ export default function OwnerUsage() {
     }
   };
 
+  const formatQuantity = (quantity: number, unit: string) => {
+    if (unit === 'kg' || unit === 'l') {
+      return `${quantity.toFixed(3)} ${unit}`;
+    }
+    return `${quantity.toFixed(2)} ${unit || 'units'}`;
+  };
+
   return (
     <MobileShell theme="owner" className="pb-20">
       <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-md px-6 py-4 border-b">
@@ -88,10 +111,10 @@ export default function OwnerUsage() {
             variant="ghost" 
             size="icon" 
             onClick={handleSync}
-            disabled={isSyncing || isLoading}
+            disabled={isSyncing || isLoading || isFetching}
             data-testid="button-sync"
           >
-            <RefreshCw className={`h-5 w-5 ${isSyncing ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-5 w-5 ${(isSyncing || isFetching) ? 'animate-spin' : ''}`} />
           </Button>
         </div>
       </header>
@@ -126,18 +149,26 @@ export default function OwnerUsage() {
                   {isLoading ? (
                     <Loader2 className="h-6 w-6 animate-spin" />
                   ) : (
-                    <span className="text-3xl font-bold" data-testid="text-total-cost">
-                      KES {(data?.summary?.totalCost ?? 0).toFixed(2)}
+                    <span className="text-3xl font-bold" data-testid="text-total-ingredients">
+                      {data?.summary?.totalIngredients ?? 0}
                     </span>
                   )}
+                  <span className="text-sm opacity-80">ingredients used</span>
                 </div>
               </div>
               <div className="text-right">
-                <TrendingDown className="h-8 w-8 opacity-50" />
-                <p className="text-sm opacity-80 mt-1" data-testid="text-item-count">
-                  {data?.summary?.totalItems ?? 0} ingredients
+                <p className="text-2xl font-bold" data-testid="text-total-products">
+                  {data?.summary?.totalProductsSold ?? 0}
+                </p>
+                <p className="text-sm opacity-80">
+                  products sold
                 </p>
               </div>
+            </div>
+            <div className="mt-3 pt-3 border-t border-primary-foreground/20">
+              <p className="text-sm opacity-80" data-testid="text-transaction-count">
+                From {data?.summary?.totalTransactions ?? 0} transactions
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -145,43 +176,68 @@ export default function OwnerUsage() {
         <div className="space-y-3">
           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider px-1 flex items-center gap-2">
             <Package className="h-4 w-4" />
-            Ingredients Used
+            Ingredients Consumed
           </h3>
 
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
-          ) : !data?.usage.length ? (
+          ) : !data?.usage?.length ? (
             <Card className="p-8 text-center">
               <Calendar className="h-12 w-12 mx-auto text-muted-foreground/50 mb-2" />
               <p className="text-muted-foreground">No ingredient usage in this period</p>
             </Card>
           ) : (
             data.usage.map((item) => (
-              <Card key={item.id} className="border-none shadow-sm" data-testid={`card-usage-${item.id}`}>
-                <CardContent className="p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-full bg-orange-100 flex items-center justify-center text-orange-600">
-                      <Package className="h-5 w-5" />
+              <Card 
+                key={item.id} 
+                className="border-none shadow-sm overflow-hidden" 
+                data-testid={`card-usage-${item.id}`}
+              >
+                <CardContent 
+                  className="p-4 cursor-pointer"
+                  onClick={() => toggleExpand(item.id)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-full bg-orange-100 flex items-center justify-center text-orange-600">
+                        <Package className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-sm" data-testid={`text-ingredient-name-${item.id}`}>
+                          {item.name}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Used in {item.products.length} product{item.products.length !== 1 ? 's' : ''}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-medium text-sm" data-testid={`text-ingredient-name-${item.id}`}>
-                        {item.name}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {item.quantity.toFixed(2)} {item.unit} used
-                      </p>
+                    <div className="flex items-center gap-2">
+                      <div className="text-right">
+                        <p className="font-bold" data-testid={`text-ingredient-qty-${item.id}`}>
+                          {formatQuantity(item.quantity, item.unit)}
+                        </p>
+                      </div>
+                      {item.products.length > 0 && (
+                        expandedItems.has(item.id) ? 
+                          <ChevronUp className="h-4 w-4 text-muted-foreground" /> : 
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      )}
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="font-bold" data-testid={`text-ingredient-cost-${item.id}`}>
-                      KES {item.totalCost.toFixed(2)}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      @ KES {item.costPerUnit.toFixed(2)}/unit
-                    </p>
-                  </div>
+                  
+                  {expandedItems.has(item.id) && item.products.length > 0 && (
+                    <div className="mt-3 pt-3 border-t space-y-2">
+                      <p className="text-xs font-medium text-muted-foreground uppercase">Used in:</p>
+                      {item.products.map((product, idx) => (
+                        <div key={idx} className="flex justify-between text-sm pl-2">
+                          <span className="text-muted-foreground">{product.name}</span>
+                          <span className="font-medium">x{product.count}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))
