@@ -3,7 +3,12 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
 import { z } from "zod";
-import { insertInventoryItemSchema, insertSalesRecordSchema, insertDespatchLogSchema, insertReorderRequestSchema } from "@shared/schema";
+import { 
+  insertInventoryItemSchema, insertSalesRecordSchema, insertDespatchLogSchema, insertReorderRequestSchema,
+  storeItems, storePurchases, storePurchaseItems, storeProcessedItems, storeDespatches, storeDespatchItems, storeReorders,
+  insertStoreItemSchema, insertStorePurchaseSchema, insertStorePurchaseItemSchema, insertStoreProcessedItemSchema,
+  insertStoreDespatchSchema, insertStoreDespatchItemSchema, insertStoreReorderSchema
+} from "@shared/schema";
 import { initPosterPOSClient, getPosterPOSClient, isPosterPOSInitialized } from "./posterpos";
 import { initTelegramBot, getTelegramBot, isTelegramBotInitialized } from "./telegram";
 import { startTransactionSync, syncNewTransactions, getLastSyncTimestamp } from "./transactionSync";
@@ -1086,6 +1091,329 @@ export async function registerRoutes(
     } catch (error: any) {
       log(`Error fetching payments: ${error.message}`);
       res.status(500).json({ message: error.message || "Failed to fetch payment data" });
+    }
+  });
+
+  // ============ MAIN STORE ADMIN ROUTES ============
+  
+  // Store Items CRUD
+  app.get("/api/store/items", async (req, res) => {
+    try {
+      const items = await db.select().from(storeItems).orderBy(storeItems.name);
+      res.json(items);
+    } catch (error: any) {
+      log(`Error fetching store items: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch store items" });
+    }
+  });
+
+  app.post("/api/store/items", async (req, res) => {
+    try {
+      const data = insertStoreItemSchema.parse(req.body);
+      const [item] = await db.insert(storeItems).values(data).returning();
+      res.status(201).json(item);
+    } catch (error: any) {
+      log(`Error creating store item: ${error.message}`);
+      res.status(500).json({ message: "Failed to create store item" });
+    }
+  });
+
+  app.patch("/api/store/items/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      const { eq } = await import("drizzle-orm");
+      const [item] = await db.update(storeItems).set({ ...updates, updatedAt: new Date() }).where(eq(storeItems.id, id)).returning();
+      if (!item) {
+        return res.status(404).json({ message: "Item not found" });
+      }
+      res.json(item);
+    } catch (error: any) {
+      log(`Error updating store item: ${error.message}`);
+      res.status(500).json({ message: "Failed to update store item" });
+    }
+  });
+
+  app.delete("/api/store/items/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { eq } = await import("drizzle-orm");
+      await db.update(storeItems).set({ isActive: false }).where(eq(storeItems.id, id));
+      res.json({ success: true });
+    } catch (error: any) {
+      log(`Error deleting store item: ${error.message}`);
+      res.status(500).json({ message: "Failed to delete store item" });
+    }
+  });
+
+  // Store Purchases
+  app.get("/api/store/purchases", async (req, res) => {
+    try {
+      const { desc } = await import("drizzle-orm");
+      const purchases = await db.select().from(storePurchases).orderBy(desc(storePurchases.createdAt)).limit(50);
+      res.json(purchases);
+    } catch (error: any) {
+      log(`Error fetching store purchases: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch store purchases" });
+    }
+  });
+
+  app.post("/api/store/purchases", async (req, res) => {
+    try {
+      const { purchase, items } = req.body;
+      const { eq, sql } = await import("drizzle-orm");
+      
+      // Create purchase record
+      const purchaseData = insertStorePurchaseSchema.parse(purchase);
+      const [newPurchase] = await db.insert(storePurchases).values(purchaseData).returning();
+      
+      // Create purchase items and update stock
+      const createdItems = [];
+      for (const item of items) {
+        const itemData = {
+          ...item,
+          purchaseId: newPurchase.id,
+        };
+        const [purchaseItem] = await db.insert(storePurchaseItems).values(itemData).returning();
+        createdItems.push(purchaseItem);
+        
+        // Update store item stock if linked
+        if (item.storeItemId) {
+          await db.update(storeItems)
+            .set({ 
+              currentStock: sql`${storeItems.currentStock} + ${item.quantity}`,
+              updatedAt: new Date()
+            })
+            .where(eq(storeItems.id, item.storeItemId));
+        }
+      }
+      
+      res.status(201).json({ purchase: newPurchase, items: createdItems });
+    } catch (error: any) {
+      log(`Error creating store purchase: ${error.message}`);
+      res.status(500).json({ message: "Failed to create store purchase" });
+    }
+  });
+
+  app.get("/api/store/purchases/:id/items", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { eq } = await import("drizzle-orm");
+      const items = await db.select().from(storePurchaseItems).where(eq(storePurchaseItems.purchaseId, id));
+      res.json(items);
+    } catch (error: any) {
+      log(`Error fetching purchase items: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch purchase items" });
+    }
+  });
+
+  // Store Processed Items
+  app.get("/api/store/processed", async (req, res) => {
+    try {
+      const { desc, eq } = await import("drizzle-orm");
+      const status = req.query.status as string;
+      let query = db.select().from(storeProcessedItems);
+      if (status) {
+        query = query.where(eq(storeProcessedItems.status, status)) as any;
+      }
+      const items = await query.orderBy(desc(storeProcessedItems.processedAt)).limit(100);
+      res.json(items);
+    } catch (error: any) {
+      log(`Error fetching processed items: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch processed items" });
+    }
+  });
+
+  app.post("/api/store/processed", async (req, res) => {
+    try {
+      const data = insertStoreProcessedItemSchema.parse(req.body);
+      const { eq, sql } = await import("drizzle-orm");
+      
+      // Validate quantity bounds if linked to purchase item
+      if (data.purchaseItemId) {
+        const [purchaseItem] = await db.select().from(storePurchaseItems)
+          .where(eq(storePurchaseItems.id, data.purchaseItemId));
+        
+        if (!purchaseItem) {
+          return res.status(400).json({ message: "Purchase item not found" });
+        }
+        
+        const pendingQty = Number(purchaseItem.quantity) - Number(purchaseItem.quantityProcessed);
+        if (Number(data.quantity) > pendingQty) {
+          return res.status(400).json({ 
+            message: `Cannot process ${data.quantity}. Only ${pendingQty} pending.` 
+          });
+        }
+      }
+      
+      const [item] = await db.insert(storeProcessedItems).values(data).returning();
+      
+      // Update purchase item processed quantity if linked
+      if (data.purchaseItemId) {
+        await db.update(storePurchaseItems)
+          .set({ 
+            quantityProcessed: sql`${storePurchaseItems.quantityProcessed} + ${data.quantity}`,
+            status: 'partially_processed'
+          })
+          .where(eq(storePurchaseItems.id, data.purchaseItemId));
+      }
+      
+      // Reduce store stock (items are packed from warehouse stock)
+      if (data.storeItemId) {
+        await db.update(storeItems)
+          .set({ 
+            currentStock: sql`${storeItems.currentStock} - ${data.quantity}`,
+            updatedAt: new Date()
+          })
+          .where(eq(storeItems.id, data.storeItemId));
+      }
+      
+      res.status(201).json(item);
+    } catch (error: any) {
+      log(`Error creating processed item: ${error.message}`);
+      res.status(500).json({ message: "Failed to create processed item" });
+    }
+  });
+
+  // Get items pending processing (from purchases)
+  app.get("/api/store/pending-process", async (req, res) => {
+    try {
+      const { ne, sql } = await import("drizzle-orm");
+      const items = await db.select().from(storePurchaseItems)
+        .where(ne(storePurchaseItems.status, 'fully_processed'));
+      res.json(items);
+    } catch (error: any) {
+      log(`Error fetching pending items: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch pending items" });
+    }
+  });
+
+  // Store Despatches
+  app.get("/api/store/despatches", async (req, res) => {
+    try {
+      const { desc } = await import("drizzle-orm");
+      const despatches = await db.select().from(storeDespatches).orderBy(desc(storeDespatches.createdAt)).limit(50);
+      res.json(despatches);
+    } catch (error: any) {
+      log(`Error fetching despatches: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch despatches" });
+    }
+  });
+
+  app.post("/api/store/despatches", async (req, res) => {
+    try {
+      const { despatch, items } = req.body;
+      const { eq } = await import("drizzle-orm");
+      
+      // Create despatch record
+      const despatchData = insertStoreDespatchSchema.parse({
+        ...despatch,
+        totalItems: items.length,
+      });
+      const [newDespatch] = await db.insert(storeDespatches).values(despatchData).returning();
+      
+      // Create despatch items and update processed item status
+      const createdItems = [];
+      for (const item of items) {
+        const itemData = {
+          ...item,
+          despatchId: newDespatch.id,
+        };
+        const [despatchItem] = await db.insert(storeDespatchItems).values(itemData).returning();
+        createdItems.push(despatchItem);
+        
+        // Update processed item status
+        if (item.processedItemId) {
+          await db.update(storeProcessedItems)
+            .set({ status: 'dispatched' })
+            .where(eq(storeProcessedItems.id, item.processedItemId));
+        }
+      }
+      
+      res.status(201).json({ despatch: newDespatch, items: createdItems });
+    } catch (error: any) {
+      log(`Error creating despatch: ${error.message}`);
+      res.status(500).json({ message: "Failed to create despatch" });
+    }
+  });
+
+  app.patch("/api/store/despatches/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      const { eq } = await import("drizzle-orm");
+      const [despatch] = await db.update(storeDespatches).set(updates).where(eq(storeDespatches.id, id)).returning();
+      if (!despatch) {
+        return res.status(404).json({ message: "Despatch not found" });
+      }
+      res.json(despatch);
+    } catch (error: any) {
+      log(`Error updating despatch: ${error.message}`);
+      res.status(500).json({ message: "Failed to update despatch" });
+    }
+  });
+
+  app.get("/api/store/despatches/:id/items", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { eq } = await import("drizzle-orm");
+      const items = await db.select().from(storeDespatchItems).where(eq(storeDespatchItems.despatchId, id));
+      res.json(items);
+    } catch (error: any) {
+      log(`Error fetching despatch items: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch despatch items" });
+    }
+  });
+
+  // Store Reorders
+  app.get("/api/store/reorders", async (req, res) => {
+    try {
+      const { desc } = await import("drizzle-orm");
+      const reorders = await db.select().from(storeReorders).orderBy(desc(storeReorders.createdAt)).limit(50);
+      res.json(reorders);
+    } catch (error: any) {
+      log(`Error fetching reorders: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch reorders" });
+    }
+  });
+
+  app.post("/api/store/reorders", async (req, res) => {
+    try {
+      const data = insertStoreReorderSchema.parse(req.body);
+      const [reorder] = await db.insert(storeReorders).values(data).returning();
+      res.status(201).json(reorder);
+    } catch (error: any) {
+      log(`Error creating reorder: ${error.message}`);
+      res.status(500).json({ message: "Failed to create reorder" });
+    }
+  });
+
+  app.patch("/api/store/reorders/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+      const { eq } = await import("drizzle-orm");
+      const [reorder] = await db.update(storeReorders).set(updates).where(eq(storeReorders.id, id)).returning();
+      if (!reorder) {
+        return res.status(404).json({ message: "Reorder not found" });
+      }
+      res.json(reorder);
+    } catch (error: any) {
+      log(`Error updating reorder: ${error.message}`);
+      res.status(500).json({ message: "Failed to update reorder" });
+    }
+  });
+
+  // Get low stock items for reorder suggestions
+  app.get("/api/store/low-stock", async (req, res) => {
+    try {
+      const { sql, lte } = await import("drizzle-orm");
+      const items = await db.select().from(storeItems)
+        .where(lte(storeItems.currentStock, storeItems.minStock));
+      res.json(items);
+    } catch (error: any) {
+      log(`Error fetching low stock items: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch low stock items" });
     }
   });
 

@@ -10,10 +10,11 @@ import OwnerRequests from "@/pages/owner/Requests";
 import OwnerPayments from "@/pages/owner/Payments";
 import OwnerSales from "@/pages/owner/Sales";
 import OwnerUsage from "@/pages/owner/Usage";
-import StoreInventory from "@/pages/store/Inventory";
+import StoreStock from "@/pages/store/Stock";
+import StorePurchases from "@/pages/store/Purchases";
+import StoreProcess from "@/pages/store/Process";
 import StoreDespatch from "@/pages/store/Despatch";
-import StoreReorder from "@/pages/store/Reorder";
-import StoreUsage from "@/pages/store/Usage";
+import StoreReorder from "@/pages/store/StoreReorder";
 import ShopStock from "@/pages/shop/Stock";
 import NotFound from "@/pages/not-found";
 
@@ -31,10 +32,11 @@ function Router() {
       <Route path="/owner/usage" component={OwnerUsage} />
       
       {/* Store Routes */}
-      <Route path="/store" component={StoreInventory} />
+      <Route path="/store" component={StoreStock} />
+      <Route path="/store/purchases" component={StorePurchases} />
+      <Route path="/store/process" component={StoreProcess} />
       <Route path="/store/despatch" component={StoreDespatch} />
       <Route path="/store/reorder" component={StoreReorder} />
-      <Route path="/store/usage" component={StoreUsage} />
       
       {/* Shop Routes */}
       <Route path="/shop" component={ShopStock} />

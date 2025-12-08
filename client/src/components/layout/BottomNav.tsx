@@ -1,6 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { cn } from "@/lib/utils";
-import { LayoutGrid, Banknote, Package, Settings, ArrowLeft, TrendingDown, Beaker } from "lucide-react";
+import { LayoutGrid, Banknote, Package, Settings, Truck, Beaker, ShoppingCart, Cog, AlertTriangle } from "lucide-react";
 
 interface BottomNavProps {
   role: "owner" | "store" | "shop";
@@ -18,9 +18,10 @@ export function BottomNav({ role }: BottomNavProps) {
     ],
     store: [
       { href: "/store", icon: Package, label: "Stock" },
-      { href: "/store/usage", icon: TrendingDown, label: "Usage" },
-      { href: "/store/despatch", icon: ArrowLeft, label: "Despatch" },
-      { href: "/store/reorder", icon: LayoutGrid, label: "Order" },
+      { href: "/store/purchases", icon: ShoppingCart, label: "Purchases" },
+      { href: "/store/process", icon: Cog, label: "Process" },
+      { href: "/store/despatch", icon: Truck, label: "Despatch" },
+      { href: "/store/reorder", icon: AlertTriangle, label: "Reorder" },
     ],
     shop: [
       { href: "/shop", icon: Package, label: "Stock" },

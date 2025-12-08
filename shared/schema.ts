@@ -146,6 +146,109 @@ export const expenseItems = pgTable("expense_items", {
   costPerUnit: decimal("cost_per_unit", { precision: 10, scale: 2 }),
 });
 
+// ============ MAIN STORE ADMIN TABLES ============
+
+// Store Items - Master list of items managed by the main store
+export const storeItems = pgTable("store_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  category: text("category").notNull().default("general"),
+  unit: text("unit").notNull().default("pcs"), // pcs, kg, g, ml, L
+  minStock: decimal("min_stock", { precision: 10, scale: 2 }).notNull().default("0"),
+  currentStock: decimal("current_stock", { precision: 10, scale: 2 }).notNull().default("0"),
+  costPerUnit: decimal("cost_per_unit", { precision: 10, scale: 2 }),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Store Purchases - Items bought from suppliers
+export const storePurchases = pgTable("store_purchases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  supplier: text("supplier"),
+  invoiceNumber: text("invoice_number"),
+  purchaseDate: timestamp("purchase_date").notNull().defaultNow(),
+  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }),
+  status: text("status").notNull().default("received"), // received, partially_processed, fully_processed
+  notes: text("notes"),
+  createdBy: text("created_by").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Store Purchase Items - Individual items in a purchase
+export const storePurchaseItems = pgTable("store_purchase_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  purchaseId: varchar("purchase_id").references(() => storePurchases.id).notNull(),
+  storeItemId: varchar("store_item_id").references(() => storeItems.id),
+  itemName: text("item_name").notNull(),
+  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
+  unit: text("unit").notNull().default("pcs"),
+  costPerUnit: decimal("cost_per_unit", { precision: 10, scale: 2 }),
+  totalCost: decimal("total_cost", { precision: 10, scale: 2 }),
+  quantityProcessed: decimal("quantity_processed", { precision: 10, scale: 2 }).notNull().default("0"),
+  status: text("status").notNull().default("pending"), // pending, partially_processed, fully_processed
+});
+
+// Store Processed Items - Items packed and ready for dispatch
+export const storeProcessedItems = pgTable("store_processed_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  storeItemId: varchar("store_item_id").references(() => storeItems.id),
+  purchaseItemId: varchar("purchase_item_id").references(() => storePurchaseItems.id),
+  itemName: text("item_name").notNull(),
+  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
+  unit: text("unit").notNull().default("pcs"),
+  batchNumber: text("batch_number"),
+  processedBy: text("processed_by").notNull(),
+  processedAt: timestamp("processed_at").notNull().defaultNow(),
+  status: text("status").notNull().default("ready"), // ready, dispatched
+  notes: text("notes"),
+});
+
+// Store Despatches - Shipments sent to the shop
+export const storeDespatches = pgTable("store_despatches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  despatchDate: timestamp("despatch_date").notNull().defaultNow(),
+  destination: text("destination").notNull().default("Shop"),
+  status: text("status").notNull().default("pending"), // pending, in_transit, delivered, confirmed
+  totalItems: integer("total_items").notNull().default(0),
+  sentBy: text("sent_by").notNull(),
+  receivedBy: text("received_by"),
+  receivedAt: timestamp("received_at"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Store Despatch Items - Individual items in a despatch
+export const storeDespatchItems = pgTable("store_despatch_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  despatchId: varchar("despatch_id").references(() => storeDespatches.id).notNull(),
+  processedItemId: varchar("processed_item_id").references(() => storeProcessedItems.id),
+  storeItemId: varchar("store_item_id").references(() => storeItems.id),
+  itemName: text("item_name").notNull(),
+  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
+  unit: text("unit").notNull().default("pcs"),
+  receivedQuantity: decimal("received_quantity", { precision: 10, scale: 2 }),
+  notes: text("notes"),
+});
+
+// Store Reorders - Items that need to be reordered from suppliers
+export const storeReorders = pgTable("store_reorders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  storeItemId: varchar("store_item_id").references(() => storeItems.id),
+  itemName: text("item_name").notNull(),
+  currentStock: decimal("current_stock", { precision: 10, scale: 2 }).notNull(),
+  minStock: decimal("min_stock", { precision: 10, scale: 2 }).notNull(),
+  suggestedQuantity: decimal("suggested_quantity", { precision: 10, scale: 2 }).notNull(),
+  unit: text("unit").notNull().default("pcs"),
+  estimatedCost: decimal("estimated_cost", { precision: 10, scale: 2 }),
+  priority: text("priority").notNull().default("normal"), // low, normal, high, urgent
+  status: text("status").notNull().default("pending"), // pending, ordered, received, cancelled
+  orderedAt: timestamp("ordered_at"),
+  receivedAt: timestamp("received_at"),
+  createdBy: text("created_by").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Stock Reconciliation Reports
 export const stockReconciliations = pgTable("stock_reconciliations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -176,6 +279,15 @@ export const insertShopExpenseSchema = createInsertSchema(shopExpenses).omit({ i
 export const insertExpenseItemSchema = createInsertSchema(expenseItems).omit({ id: true });
 export const insertStockReconciliationSchema = createInsertSchema(stockReconciliations).omit({ id: true });
 
+// Main Store Admin Insert Schemas
+export const insertStoreItemSchema = createInsertSchema(storeItems).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertStorePurchaseSchema = createInsertSchema(storePurchases).omit({ id: true, createdAt: true });
+export const insertStorePurchaseItemSchema = createInsertSchema(storePurchaseItems).omit({ id: true });
+export const insertStoreProcessedItemSchema = createInsertSchema(storeProcessedItems).omit({ id: true });
+export const insertStoreDespatchSchema = createInsertSchema(storeDespatches).omit({ id: true, createdAt: true });
+export const insertStoreDespatchItemSchema = createInsertSchema(storeDespatchItems).omit({ id: true });
+export const insertStoreReorderSchema = createInsertSchema(storeReorders).omit({ id: true, createdAt: true });
+
 // Types
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
@@ -205,3 +317,19 @@ export type InsertExpenseItem = z.infer<typeof insertExpenseItemSchema>;
 export type ExpenseItem = typeof expenseItems.$inferSelect;
 export type InsertStockReconciliation = z.infer<typeof insertStockReconciliationSchema>;
 export type StockReconciliation = typeof stockReconciliations.$inferSelect;
+
+// Main Store Admin Types
+export type InsertStoreItem = z.infer<typeof insertStoreItemSchema>;
+export type StoreItem = typeof storeItems.$inferSelect;
+export type InsertStorePurchase = z.infer<typeof insertStorePurchaseSchema>;
+export type StorePurchase = typeof storePurchases.$inferSelect;
+export type InsertStorePurchaseItem = z.infer<typeof insertStorePurchaseItemSchema>;
+export type StorePurchaseItem = typeof storePurchaseItems.$inferSelect;
+export type InsertStoreProcessedItem = z.infer<typeof insertStoreProcessedItemSchema>;
+export type StoreProcessedItem = typeof storeProcessedItems.$inferSelect;
+export type InsertStoreDespatch = z.infer<typeof insertStoreDespatchSchema>;
+export type StoreDespatch = typeof storeDespatches.$inferSelect;
+export type InsertStoreDespatchItem = z.infer<typeof insertStoreDespatchItemSchema>;
+export type StoreDespatchItem = typeof storeDespatchItems.$inferSelect;
+export type InsertStoreReorder = z.infer<typeof insertStoreReorderSchema>;
+export type StoreReorder = typeof storeReorders.$inferSelect;
