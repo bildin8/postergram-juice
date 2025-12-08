@@ -170,6 +170,7 @@ export class PosterPOSClient {
     try {
       const params: Record<string, string> = {
         include_products: 'true',
+        include_modifications: '1',
         status: '2',
       };
       
@@ -241,6 +242,16 @@ export class PosterPOSClient {
     const dateTo = to.toISOString().split('T')[0].replace(/-/g, '');
     
     return this.getIngredientMovements(dateFrom, dateTo);
+  }
+
+  async getTransactionProducts(transactionId: string): Promise<TransactionProductDetail[]> {
+    try {
+      const response = await this.request('dash.getTransactionProducts', { transaction_id: transactionId });
+      return response.response || [];
+    } catch (error) {
+      log(`Failed to get transaction products for ${transactionId}: ${error}`, 'posterpos');
+      return [];
+    }
   }
 
   async getProductWithRecipe(productId: string): Promise<ProductWithRecipe | null> {
@@ -357,6 +368,26 @@ export interface ProductWithRecipe {
   type: string;
   ingredients?: ProductRecipeIngredient[];
   group_modifications?: ProductModificationGroup[];
+}
+
+export interface TransactionProductDetail {
+  product_id: string;
+  product_name: string;
+  modification_id: string;
+  modificator_name: string | null;
+  modificator_barcode: string | null;
+  modificator_product_code: string | null;
+  num: string;
+  time: string;
+  workshop: string;
+  barcode: string;
+  product_code: string;
+  tax_id: string;
+  nodiscount: string;
+  payed_sum: string;
+  product_sum: string;
+  discount: string;
+  category_id: string;
 }
 
 // Singleton instance

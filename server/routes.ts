@@ -401,6 +401,19 @@ export async function registerRoutes(
     });
   });
 
+  // ============ DEBUG: Test transaction products lookup ============
+  app.get("/api/posterpos/transaction-products/:id", async (req, res) => {
+    try {
+      const client = getPosterPOSClient();
+      const txId = req.params.id;
+      const result = await client.getTransactionProducts(txId);
+      res.json({ transaction_id: txId, products: result });
+    } catch (error: any) {
+      log(`Error fetching transaction products: ${error.message}`);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // ============ INGREDIENT MOVEMENTS ============
   app.get("/api/posterpos/movements", async (req, res) => {
     try {
@@ -588,13 +601,31 @@ export async function registerRoutes(
       
       let totalProductsSold = 0;
       
+      // Build a modifier name to recipe modifier lookup for faster matching
+      const buildModifierNameLookup = (recipe: any): Map<string, any> => {
+        const lookup = new Map<string, any>();
+        if (recipe.group_modifications) {
+          for (const group of recipe.group_modifications) {
+            for (const mod of group.modifications) {
+              // Store by lowercase trimmed name for fuzzy matching
+              const normalizedName = mod.name.toLowerCase().trim();
+              lookup.set(normalizedName, mod);
+            }
+          }
+        }
+        return lookup;
+      };
+
       for (const transaction of transactions) {
         if (!transaction.products || transaction.products.length === 0) continue;
         
-        for (let lineIdx = 0; lineIdx < transaction.products.length; lineIdx++) {
-          const product = transaction.products[lineIdx];
-          const productId = product.product_id.toString();
-          const quantitySold = parseFloat(product.num) || 1;
+        // Fetch detailed transaction products with modificator_name
+        const txProducts = await client.getTransactionProducts(transaction.transaction_id);
+        
+        for (let lineIdx = 0; lineIdx < txProducts.length; lineIdx++) {
+          const txProduct = txProducts[lineIdx];
+          const productId = txProduct.product_id.toString();
+          const quantitySold = parseFloat(txProduct.num) || 1;
           totalProductsSold += quantitySold;
           
           // Get recipe for this product (cached)
@@ -636,106 +667,97 @@ export async function registerRoutes(
               }
             }
             
-            // Debug: Log info for Pure & Simple to understand modifier structure
-            if (recipe.product_name?.toLowerCase().includes('pure') || recipe.product_name?.toLowerCase().includes('simple')) {
-              log(`DEBUG Pure&Simple: product_id=${productId}, product_name=${recipe.product_name}`);
-              log(`DEBUG Pure&Simple: tx_modifications=${JSON.stringify(product.modifications || 'NONE')}`);
-              log(`DEBUG Pure&Simple: recipe_group_modifications=${recipe.group_modifications?.length || 0} groups`);
-              if (recipe.group_modifications) {
-                for (const g of recipe.group_modifications) {
-                  log(`DEBUG Pure&Simple:   Group "${g.name}": ${g.modifications.length} mods`);
-                  for (const m of g.modifications) {
-                    log(`DEBUG Pure&Simple:     Mod id=${m.dish_modification_id}, name=${m.name}, type=${m.type}, ing_id=${m.ingredient_id}, brutto=${m.brutto}`);
-                  }
-                }
-              }
-            }
-            
-            // Process modifiers (ingredient choices) from the transaction
-            if (product.modifications && Array.isArray(product.modifications)) {
-              if (!recipe.group_modifications) continue;
+            // Process selected modifiers using modificator_name from transaction products
+            if (txProduct.modificator_name && recipe.group_modifications) {
+              const modifierLookup = buildModifierNameLookup(recipe);
               
-              for (const txMod of product.modifications) {
-                const modId = txMod.dish_modification_id || txMod.modification_id;
-                if (!modId) continue;
-                
+              // Parse comma-separated modifier names
+              const selectedModifierNames = txProduct.modificator_name
+                .split(',')
+                .map((name: string) => name.toLowerCase().trim())
+                .filter((name: string) => name.length > 0);
+              
+              // Debug: Log modifier matching for Pure & Simple
+              if (recipe.product_name?.toLowerCase().includes('pure') || recipe.product_name?.toLowerCase().includes('simple')) {
+                log(`DEBUG Pure&Simple: Matched modifiers from "${txProduct.modificator_name}": [${selectedModifierNames.join(', ')}]`);
+              }
+              
+              for (const modName of selectedModifierNames) {
                 // Track to prevent double-processing within same line item
-                const txModKey = `${transaction.transaction_id}-${lineIdx}-${modId}`;
-                if (processedModifiers.has(txModKey)) continue;
-                processedModifiers.add(txModKey);
+                const modKey = `${transaction.transaction_id}-${lineIdx}-${modName}`;
+                if (processedModifiers.has(modKey)) continue;
+                processedModifiers.add(modKey);
                 
                 // Find the matching modifier in the recipe
-                for (const group of recipe.group_modifications) {
-                  for (const mod of group.modifications) {
-                    if (mod.dish_modification_id === modId) {
-                      const modQty = parseFloat(txMod.num || '1') || 1;
-                      const modKey = `${productId}-mod-${modId}`;
-                      
-                      // Process ANY modifier that has an ingredient_id (regardless of type)
-                      if (mod.ingredient_id) {
-                        // Direct ingredient modifier - use netto with brutto fallback
-                        const usageAmount = (mod.netto || mod.brutto) * modQty * quantitySold;
-                        
-                        if (usageAmount > 0) {
-                          const existing = ingredientUsage.get(mod.ingredient_id);
-                          if (existing) {
-                            existing.quantity += usageAmount;
-                            if (!existing.productsSold.has(modKey)) {
-                              existing.productsSold.set(modKey, { name: `${recipe.product_name} + ${mod.name}`, count: modQty * quantitySold });
-                            } else {
-                              const entry = existing.productsSold.get(modKey)!;
-                              entry.count += modQty * quantitySold;
-                            }
-                          } else {
-                            const productsSold = new Map<string, { name: string; count: number }>();
-                            productsSold.set(modKey, { name: `${recipe.product_name} + ${mod.name}`, count: modQty * quantitySold });
-                            ingredientUsage.set(mod.ingredient_id, {
-                              id: mod.ingredient_id,
-                              name: mod.ingredient_name || mod.name,
-                              quantity: usageAmount,
-                              unit: mod.ingredient_unit || '',
-                              productsSold,
-                            });
-                          }
+                const mod = modifierLookup.get(modName);
+                if (mod) {
+                  const modQty = 1; // Each selected modifier counts once
+                  const trackingKey = `${productId}-mod-${modName}`;
+                  
+                  // Process modifier with ingredient_id (type 10 = ingredient modifier)
+                  if (mod.ingredient_id && mod.ingredient_id !== '0' && mod.ingredient_id !== 0) {
+                    // Normalize ingredient ID to string
+                    const modIngredientId = mod.ingredient_id.toString();
+                    // Direct ingredient modifier - use netto with brutto fallback
+                    const usageAmount = (mod.netto || mod.brutto) * modQty * quantitySold;
+                    
+                    if (usageAmount > 0) {
+                      const existing = ingredientUsage.get(modIngredientId);
+                      if (existing) {
+                        existing.quantity += usageAmount;
+                        if (!existing.productsSold.has(trackingKey)) {
+                          existing.productsSold.set(trackingKey, { name: `${recipe.product_name} + ${mod.name}`, count: modQty * quantitySold });
+                        } else {
+                          const entry = existing.productsSold.get(trackingKey)!;
+                          entry.count += modQty * quantitySold;
                         }
+                      } else {
+                        const productsSold = new Map<string, { name: string; count: number }>();
+                        productsSold.set(trackingKey, { name: `${recipe.product_name} + ${mod.name}`, count: modQty * quantitySold });
+                        ingredientUsage.set(modIngredientId, {
+                          id: modIngredientId,
+                          name: mod.ingredient_name || mod.name,
+                          quantity: usageAmount,
+                          unit: mod.ingredient_unit || '',
+                          productsSold,
+                        });
                       }
-                      
-                      // Also check if modifier references a product/dish (type 2/3) that needs recipe lookup
-                      if ((mod.type === '2' || mod.type === '3') && (mod.product_id || (!mod.ingredient_id && mod.product_id))) {
-                        const modProductId = mod.product_id;
-                        if (modProductId) {
-                          let modRecipe = recipeCache.get(modProductId);
-                          if (!modRecipe) {
-                            modRecipe = await client.getProductWithRecipe(modProductId);
-                            if (modRecipe) recipeCache.set(modProductId, modRecipe);
+                    }
+                  }
+                  
+                  // Check if modifier references a product/dish (type 2/3) that needs recipe lookup
+                  if ((mod.type === '2' || mod.type === '3') && mod.product_id) {
+                    const modProductId = mod.product_id;
+                    let modRecipe = recipeCache.get(modProductId);
+                    if (!modRecipe) {
+                      modRecipe = await client.getProductWithRecipe(modProductId);
+                      if (modRecipe) recipeCache.set(modProductId, modRecipe);
+                    }
+                    
+                    if (modRecipe && modRecipe.ingredients) {
+                      for (const modIng of modRecipe.ingredients) {
+                        const modSubIngId = modIng.ingredient_id.toString();
+                        const usageAmount = (modIng.structure_netto || modIng.structure_brutto) * modQty * quantitySold;
+                        
+                        const existing = ingredientUsage.get(modSubIngId);
+                        if (existing) {
+                          existing.quantity += usageAmount;
+                          if (!existing.productsSold.has(trackingKey)) {
+                            existing.productsSold.set(trackingKey, { name: `${recipe.product_name} + ${mod.name}`, count: modQty * quantitySold });
+                          } else {
+                            const entry = existing.productsSold.get(trackingKey)!;
+                            entry.count += modQty * quantitySold;
                           }
-                          
-                          if (modRecipe && modRecipe.ingredients) {
-                            for (const modIng of modRecipe.ingredients) {
-                              const usageAmount = (modIng.structure_netto || modIng.structure_brutto) * modQty * quantitySold;
-                              
-                              const existing = ingredientUsage.get(modIng.ingredient_id);
-                              if (existing) {
-                                existing.quantity += usageAmount;
-                                if (!existing.productsSold.has(modKey)) {
-                                  existing.productsSold.set(modKey, { name: `${recipe.product_name} + ${mod.name}`, count: modQty * quantitySold });
-                                } else {
-                                  const entry = existing.productsSold.get(modKey)!;
-                                  entry.count += modQty * quantitySold;
-                                }
-                              } else {
-                                const productsSold = new Map<string, { name: string; count: number }>();
-                                productsSold.set(modKey, { name: `${recipe.product_name} + ${mod.name}`, count: modQty * quantitySold });
-                                ingredientUsage.set(modIng.ingredient_id, {
-                                  id: modIng.ingredient_id,
-                                  name: modIng.ingredient_name,
-                                  quantity: usageAmount,
-                                  unit: modIng.structure_unit || modIng.ingredient_unit || '',
-                                  productsSold,
-                                });
-                              }
-                            }
-                          }
+                        } else {
+                          const productsSold = new Map<string, { name: string; count: number }>();
+                          productsSold.set(trackingKey, { name: `${recipe.product_name} + ${mod.name}`, count: modQty * quantitySold });
+                          ingredientUsage.set(modSubIngId, {
+                            id: modSubIngId,
+                            name: modIng.ingredient_name,
+                            quantity: usageAmount,
+                            unit: modIng.structure_unit || modIng.ingredient_unit || '',
+                            productsSold,
+                          });
                         }
                       }
                     }

@@ -92,6 +92,24 @@ Preferred communication style: Simple, everyday language.
 - Retrieve transaction history
 - Get stock levels
 - Manual sync endpoints for inventory and sales data
+- Real-time ingredient usage tracking from transactions
+
+**Ingredient Usage Tracking**:
+The system calculates ingredient consumption by combining:
+1. **Base Recipe Ingredients**: From `menu.getProduct` API - static ingredients for each dish
+2. **Selected Modifiers**: From `dash.getTransactionProducts` API - the `modificator_name` field contains comma-separated modifier names selected by customers
+3. **Modifier Recipes**: From `group_modifications` in product recipes - each modifier has `ingredient_id` and `brutto` amount
+
+**Key API Endpoints Used**:
+- `dash.getTransactions` - Get transaction list with product IDs
+- `dash.getTransactionProducts` - Get detailed product info WITH `modificator_name` for selected modifiers
+- `menu.getProduct` - Get product recipes and available modifiers
+
+**Important API Notes**:
+- `dash.getTransactions` only returns `modification_id` (combined ID), NOT individual modifier details
+- `dash.getTransactionProducts` returns `modificator_name` (e.g., "Oranges, Apples, Ginger") - the key to modifier tracking
+- Use date format `Ymd` (e.g., 20251207) for date parameters
+- Amounts are in cents/smallest currency unit - divide by 100 for display
 
 **Configuration**: Requires environment variables:
 - `POSTERPOS_API_ENDPOINT` - API base URL
