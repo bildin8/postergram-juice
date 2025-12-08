@@ -973,6 +973,122 @@ export async function registerRoutes(
     }
   });
 
+  // ============ PAYMENTS BY METHOD ============
+  app.get("/api/payments", async (req, res) => {
+    try {
+      if (!isPosterPOSInitialized()) {
+        return res.status(503).json({ message: "PosterPOS not configured" });
+      }
+      
+      const client = getPosterPOSClient();
+      const { from, to } = req.query;
+      
+      let dateFrom: string;
+      let dateTo: string;
+      
+      // Helper to get local date in YYYYMMDD format (EAT timezone)
+      const getLocalDateYYYYMMDD = (date: Date = new Date()): string => {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}${month}${day}`;
+      };
+      
+      // Frontend sends dates in YYYYMMDD format directly (local timezone)
+      if (from && /^\d{8}$/.test(from as string)) {
+        dateFrom = from as string;
+      } else if (from) {
+        dateFrom = getLocalDateYYYYMMDD(new Date(from as string));
+      } else {
+        dateFrom = getLocalDateYYYYMMDD();
+      }
+      
+      if (to && /^\d{8}$/.test(to as string)) {
+        dateTo = to as string;
+      } else if (to) {
+        dateTo = getLocalDateYYYYMMDD(new Date(to as string));
+      } else {
+        dateTo = getLocalDateYYYYMMDD();
+      }
+      
+      log(`Payments: Fetching transactions from ${dateFrom} to ${dateTo}`);
+      
+      // Get transactions for the date range
+      const transactions = await client.getTransactions({ dateFrom, dateTo });
+      
+      log(`Payments: Got ${transactions.length} transactions`);
+      
+      // Aggregate by payment method
+      let cashTotal = 0;
+      let cardTotal = 0;
+      let cashCount = 0;
+      let cardCount = 0;
+      const cashTransactions: any[] = [];
+      const cardTransactions: any[] = [];
+      
+      for (const tx of transactions) {
+        const payedCash = parseFloat(tx.payed_cash || '0') / 100; // Convert from cents
+        const payedCard = parseFloat(tx.payed_card || '0') / 100; // Convert from cents
+        const txSum = parseFloat(tx.payed_sum || tx.sum || '0') / 100;
+        
+        // Robust date parsing: handle both numeric epoch (milliseconds) and ISO strings
+        let dateCloseTs: number;
+        if (/^\d+$/.test(tx.date_close)) {
+          dateCloseTs = Number(tx.date_close);
+        } else {
+          dateCloseTs = new Date(tx.date_close).getTime();
+        }
+        
+        const txInfo = {
+          transaction_id: tx.transaction_id,
+          date_close: new Date(dateCloseTs).toISOString(),
+          amount: txSum,
+          table_name: tx.table_name || 'Counter',
+        };
+        
+        if (payedCash > 0) {
+          cashTotal += payedCash;
+          cashCount++;
+          cashTransactions.push({ ...txInfo, amount: payedCash, method: 'Cash' });
+        }
+        
+        if (payedCard > 0) {
+          cardTotal += payedCard;
+          cardCount++;
+          cardTransactions.push({ ...txInfo, amount: payedCard, method: 'Card/M-Pesa' });
+        }
+      }
+      
+      const grandTotal = cashTotal + cardTotal;
+      
+      res.json({
+        summary: {
+          total: grandTotal,
+          totalTransactions: transactions.length,
+          cash: {
+            total: cashTotal,
+            count: cashCount,
+            percentage: grandTotal > 0 ? (cashTotal / grandTotal) * 100 : 0,
+          },
+          card: {
+            total: cardTotal,
+            count: cardCount,
+            percentage: grandTotal > 0 ? (cardTotal / grandTotal) * 100 : 0,
+          },
+          from: dateFrom,
+          to: dateTo,
+        },
+        transactions: {
+          cash: cashTransactions.slice(0, 50), // Limit to 50 most recent
+          card: cardTransactions.slice(0, 50),
+        },
+      });
+    } catch (error: any) {
+      log(`Error fetching payments: ${error.message}`);
+      res.status(500).json({ message: error.message || "Failed to fetch payment data" });
+    }
+  });
+
   // ============ TELEGRAM WEBHOOK ============
   app.post("/api/telegram/webhook", async (req, res) => {
     try {
