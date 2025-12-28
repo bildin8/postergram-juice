@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
 import { z } from "zod";
-import { 
+import {
   insertInventoryItemSchema, insertSalesRecordSchema, insertDespatchLogSchema, insertReorderRequestSchema,
   storeItems, storePurchases, storePurchaseItems, storeProcessedItems, storeDespatches, storeDespatchItems, storeReorders,
   insertStoreItemSchema, insertStorePurchaseSchema, insertStorePurchaseItemSchema, insertStoreProcessedItemSchema,
@@ -12,17 +12,24 @@ import {
 import { initPosterPOSClient, getPosterPOSClient, isPosterPOSInitialized } from "./posterpos";
 import { initTelegramBot, getTelegramBot, isTelegramBotInitialized } from "./telegram";
 import { startTransactionSync, syncNewTransactions, getLastSyncTimestamp } from "./transactionSync";
+import { initMpesaClient, getMpesaClient, isMpesaInitialized } from "./mpesa";
+import { supabaseAdmin } from "./supabase";
 import { log } from "./index";
+import inventoryRoutes from "./inventoryRoutes";
+import storePortalRoutes from "./storePortalRoutes";
+import shopPortalRoutes from "./shopPortalRoutes";
+import partnerPortalRoutes from "./partnerPortalRoutes";
+import insightsRoutes from "./insightsRoutes";
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  
+
   // Initialize PosterPOS from environment variables (secure)
   const posterEndpoint = process.env.POSTERPOS_API_ENDPOINT;
   const posterToken = process.env.POSTERPOS_API_TOKEN;
-  
+
   if (posterEndpoint && posterToken) {
     try {
       initPosterPOSClient(posterEndpoint, posterToken);
@@ -35,7 +42,7 @@ export async function registerRoutes(
   // Initialize Telegram bot from environment variables (secure)
   const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
   const webhookUrl = process.env.TELEGRAM_WEBHOOK_URL;
-  
+
   if (telegramToken) {
     try {
       initTelegramBot(telegramToken, webhookUrl);
@@ -50,6 +57,180 @@ export async function registerRoutes(
     startTransactionSync();
     log('Transaction sync started (10-minute interval)');
   }
+
+  // Initialize M-Pesa client
+  if (initMpesaClient()) {
+    log('M-Pesa client initialized from environment');
+  }
+
+  // ============ M-PESA STK PUSH ROUTES ============
+
+  // Check M-Pesa configuration status
+  app.get("/api/mpesa/config-status", (req, res) => {
+    res.json({
+      configured: isMpesaInitialized(),
+      environment: process.env.MPESA_ENV || 'sandbox',
+    });
+  });
+
+  // Initiate STK Push
+  app.post("/api/mpesa/stk-push", async (req, res) => {
+    try {
+      if (!isMpesaInitialized()) {
+        return res.status(503).json({ success: false, error: "M-Pesa not configured" });
+      }
+
+      const { phoneNumber, amount, orderRef } = req.body;
+
+      if (!phoneNumber || !amount) {
+        return res.status(400).json({
+          success: false,
+          error: "phoneNumber and amount are required",
+        });
+      }
+
+      const client = getMpesaClient();
+      const result = await client.stkPush({
+        phoneNumber,
+        amount: parseFloat(amount),
+        accountReference: orderRef || `POS-${Date.now()}`,
+        transactionDesc: 'POS Payment',
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      log(`M-Pesa STK Push error: ${error.message}`);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // M-Pesa callback webhook (called by Safaricom)
+  app.post("/api/mpesa/callback", async (req, res) => {
+    try {
+      log(`M-Pesa Callback received: ${JSON.stringify(req.body)}`);
+
+      if (isMpesaInitialized()) {
+        const client = getMpesaClient();
+        client.processCallback(req.body);
+      }
+
+      // Always respond with success to M-Pesa
+      res.json({ ResultCode: 0, ResultDesc: "Success" });
+    } catch (error: any) {
+      log(`M-Pesa Callback error: ${error.message}`);
+      // Still respond success to avoid M-Pesa retries
+      res.json({ ResultCode: 0, ResultDesc: "Accepted" });
+    }
+  });
+
+  // Query transaction status
+  app.get("/api/mpesa/status/:checkoutRequestId", async (req, res) => {
+    try {
+      if (!isMpesaInitialized()) {
+        return res.status(503).json({ error: "M-Pesa not configured" });
+      }
+
+      const { checkoutRequestId } = req.params;
+
+      // First check Supabase (where Edge Function stores callbacks)
+      const { data: dbTransaction } = await supabaseAdmin
+        .from('mpesa_transactions')
+        .select('*')
+        .eq('checkout_request_id', checkoutRequestId)
+        .single();
+
+      if (dbTransaction && dbTransaction.status !== 'pending') {
+        return res.json({
+          status: dbTransaction.status,
+          result: {
+            resultCode: dbTransaction.result_code?.toString(),
+            resultDesc: dbTransaction.result_desc,
+            mpesaReceiptNumber: dbTransaction.mpesa_receipt_number,
+            amount: dbTransaction.amount,
+            phoneNumber: dbTransaction.phone_number,
+          },
+          source: 'supabase',
+        });
+      }
+
+      // If pending or not found, query M-Pesa directly
+      const client = getMpesaClient();
+
+      // If pending or not found, query M-Pesa directly
+      const queryResult = await client.queryTransaction(checkoutRequestId);
+
+      let status: 'pending' | 'success' | 'failed' | 'cancelled' = 'pending';
+      if (queryResult.resultCode === '0') {
+        status = 'success';
+      } else if (queryResult.resultCode === '1032') {
+        status = 'cancelled'; // User cancelled
+      } else if (queryResult.resultCode === '1037') {
+        status = 'failed'; // Timeout - no response from user (only after M-Pesa times out)
+      } else if (queryResult.resultCode === '1') {
+        status = 'failed'; // Insufficient balance
+      }
+      // Any other code (including errors like "transaction being processed") stays as 'pending'
+
+      res.json({
+        status,
+        result: queryResult,
+        source: 'query',
+      });
+    } catch (error: any) {
+      log(`M-Pesa status query error: ${error.message}`);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Verify payment by phone (fallback for manual payments)
+  app.post("/api/mpesa/verify", async (req, res) => {
+    try {
+      const { phoneNumber, amount } = req.body;
+
+      if (!phoneNumber) {
+        return res.status(400).json({ error: "phoneNumber is required" });
+      }
+
+      // Normalize phone number
+      let normalizedPhone = phoneNumber.replace(/\D/g, '');
+      if (normalizedPhone.startsWith('0')) {
+        normalizedPhone = '254' + normalizedPhone.substring(1);
+      }
+
+      // Check Supabase for recent successful transactions from this phone
+      const { data: transactions } = await supabaseAdmin
+        .from('mpesa_transactions')
+        .select('*')
+        .eq('status', 'success')
+        .ilike('phone_number', `%${normalizedPhone.slice(-9)}%`)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      if (transactions && transactions.length > 0) {
+        // Check if any match the amount (if provided)
+        const matching = amount
+          ? transactions.filter((t: any) => Math.abs(parseFloat(t.amount) - parseFloat(amount)) < 1)
+          : transactions;
+
+        if (matching.length > 0) {
+          return res.json({
+            verified: true,
+            transaction: matching[0],
+            message: `Found matching payment: ${matching[0].mpesa_receipt_number}`,
+          });
+        }
+      }
+
+      res.json({
+        verified: false,
+        message: "No matching payment found in recent transactions.",
+        hint: `Searched for payment of KES ${amount || 'any amount'} from ${phoneNumber}`,
+      });
+    } catch (error: any) {
+      log(`M-Pesa verify error: ${error.message}`);
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   // ============ INVENTORY ROUTES ============
   app.get("/api/inventory", async (req, res) => {
@@ -92,7 +273,7 @@ export async function registerRoutes(
       const { id } = req.params;
       const updates = req.body;
       const item = await storage.updateInventoryItem(id, updates);
-      
+
       if (!item) {
         res.status(404).json({ message: "Item not found" });
         return;
@@ -101,7 +282,7 @@ export async function registerRoutes(
       // Check if stock is now low and send alert
       const currentStock = Number(item.currentStock);
       const minStock = Number(item.minStock);
-      
+
       if (currentStock <= minStock && isTelegramBotInitialized()) {
         try {
           const bot = getTelegramBot();
@@ -181,10 +362,10 @@ export async function registerRoutes(
   app.post("/api/despatch", async (req, res) => {
     try {
       const data = insertDespatchLogSchema.parse(req.body);
-      
+
       // Use transaction to ensure atomic update
       const result = await storage.createDespatchWithInventoryUpdate(data);
-      
+
       res.status(201).json(result);
     } catch (error: any) {
       if (error instanceof z.ZodError) {
@@ -208,10 +389,10 @@ export async function registerRoutes(
         destination: z.string(),
         createdBy: z.string(),
       });
-      
+
       const { items, destination, createdBy } = batchSchema.parse(req.body);
       const results = [];
-      
+
       for (const item of items) {
         const data = {
           inventoryItemId: item.inventoryItemId,
@@ -223,7 +404,7 @@ export async function registerRoutes(
         const result = await storage.createDespatchWithInventoryUpdate(data);
         results.push(result);
       }
-      
+
       res.status(201).json({ count: results.length, despatches: results });
     } catch (error: any) {
       if (error instanceof z.ZodError) {
@@ -239,7 +420,7 @@ export async function registerRoutes(
   app.get("/api/requests", async (req, res) => {
     try {
       const status = req.query.status as string;
-      const requests = status === "pending" 
+      const requests = status === "pending"
         ? await storage.getPendingReorderRequests()
         : await storage.getAllReorderRequests();
       res.json(requests);
@@ -279,13 +460,13 @@ export async function registerRoutes(
     try {
       const { id } = req.params;
       const updates = req.body;
-      
+
       if (updates.status === 'approved') {
         updates.approvedAt = new Date();
       }
 
       const request = await storage.updateReorderRequest(id, updates);
-      
+
       if (!request) {
         res.status(404).json({ message: "Request not found" });
         return;
@@ -307,7 +488,7 @@ export async function registerRoutes(
       const synced: any[] = [];
       for (const stock of stockLevels) {
         const existing = await storage.getInventoryItemByPosterPosId(stock.product_id.toString());
-        
+
         if (existing) {
           const updated = await storage.updateInventoryItem(existing.id, {
             currentStock: stock.stock_count.toString(),
@@ -345,13 +526,13 @@ export async function registerRoutes(
       const synced: any[] = [];
       for (const transaction of transactions) {
         if (!transaction.products) continue;
-        
+
         for (const product of transaction.products) {
           const posterPosId = `${transaction.transaction_id}-${product.product_id}`;
-          
+
           const existing = await storage.getSalesRecordByPosterPosId(posterPosId);
           if (existing) continue;
-          
+
           const sale = await storage.createSalesRecord({
             posterPosId,
             itemName: `Product #${product.product_id}`,
@@ -378,11 +559,11 @@ export async function registerRoutes(
         res.status(503).json({ message: "PosterPOS not configured" });
         return;
       }
-      
+
       const count = await syncNewTransactions();
       const lastSync = getLastSyncTimestamp();
-      
-      res.json({ 
+
+      res.json({
         message: `Synced ${count} new transactions`,
         notified: count,
         lastSyncTimestamp: lastSync,
@@ -424,32 +605,32 @@ export async function registerRoutes(
     try {
       const client = getPosterPOSClient();
       const { from, to, type } = req.query;
-      
+
       let dateFrom: string | undefined;
       let dateTo: string | undefined;
-      
+
       if (from) {
         dateFrom = new Date(from as string).toISOString().split('T')[0].replace(/-/g, '');
       } else {
         // Default to today
         dateFrom = new Date().toISOString().split('T')[0].replace(/-/g, '');
       }
-      
+
       if (to) {
         dateTo = new Date(to as string).toISOString().split('T')[0].replace(/-/g, '');
       } else {
         dateTo = new Date().toISOString().split('T')[0].replace(/-/g, '');
       }
-      
+
       const movements = await client.getIngredientMovements(dateFrom, dateTo, type ? Number(type) : 1);
-      
+
       // Filter to show only items with usage (write_offs > 0)
       const withUsage = movements.filter(m => m.write_offs > 0);
-      
+
       // Calculate summary
       const totalUsage = movements.reduce((sum, m) => sum + m.write_offs, 0);
       const totalCost = movements.reduce((sum, m) => sum + (m.write_offs * m.cost_end), 0);
-      
+
       res.json({
         movements,
         withUsage,
@@ -472,10 +653,10 @@ export async function registerRoutes(
     try {
       const client = getPosterPOSClient();
       const movements = await client.getTodaysIngredientMovements();
-      
+
       // Filter to show only items with usage
       const withUsage = movements.filter(m => m.write_offs > 0);
-      
+
       res.json({
         movements: withUsage,
         summary: {
@@ -490,32 +671,71 @@ export async function registerRoutes(
     }
   });
 
+  // Get all PosterPOS ingredients with stock levels
+  app.get("/api/posterpos/ingredients", async (req, res) => {
+    try {
+      if (!isPosterPOSInitialized()) {
+        return res.status(503).json({ message: "PosterPOS not configured" });
+      }
+      const client = getPosterPOSClient();
+
+      // Try getting ingredients directly first
+      const ingredients = await client.getIngredients();
+      log(`PosterPOS getIngredients raw: ${JSON.stringify(ingredients).slice(0, 500)}`, 'posterpos');
+
+      // Also get storages to combine stock levels
+      const storages = await client.getStorages();
+      log(`PosterPOS getStorages raw: ${JSON.stringify(storages).slice(0, 500)}`, 'posterpos');
+
+      // Create a map of storage stock levels by ingredient_id
+      const stockMap = new Map<number, string>();
+      for (const s of storages) {
+        if (s.ingredient_id) {
+          stockMap.set(s.ingredient_id, s.ingredient_left || "0");
+        }
+      }
+
+      // Transform to expected format - use ingredients list and add stock from storages
+      const result = ingredients.map((ing: any) => ({
+        ingredient_id: ing.ingredient_id,
+        ingredient_name: ing.ingredient_name,
+        ingredient_unit: ing.ingredient_unit,
+        ingredient_left: stockMap.get(ing.ingredient_id) || "0",
+      }));
+
+      res.json(result);
+    } catch (error: any) {
+      log(`Error fetching PosterPOS ingredients: ${error.message}`);
+      res.status(500).json({ message: error.message || "Failed to fetch ingredients" });
+    }
+  });
+
   // Ingredient usage endpoint for Owner Usage page
   app.get("/api/usage", async (req, res) => {
     try {
       const client = getPosterPOSClient();
       const { from, to } = req.query;
-      
+
       let dateFrom: string;
       let dateTo: string;
-      
+
       if (from) {
         dateFrom = new Date(from as string).toISOString().split('T')[0].replace(/-/g, '');
       } else {
         dateFrom = new Date().toISOString().split('T')[0].replace(/-/g, '');
       }
-      
+
       if (to) {
         dateTo = new Date(to as string).toISOString().split('T')[0].replace(/-/g, '');
       } else {
         dateTo = new Date().toISOString().split('T')[0].replace(/-/g, '');
       }
-      
+
       // No type filter - get all movements and filter for write_offs
       const movements = await client.getIngredientMovements(dateFrom, dateTo);
-      
+
       log(`Usage API: Got ${movements.length} ingredients for ${dateFrom} to ${dateTo}`);
-      
+
       // Filter to only ingredients with POSITIVE write_offs (expense/usage)
       // Ignore negative values which are corrections/reversals
       const usage = movements
@@ -536,12 +756,12 @@ export async function registerRoutes(
           };
         })
         .sort((a, b) => b.totalCost - a.totalCost);
-      
+
       const totalCost = usage.reduce((sum, u) => sum + u.totalCost, 0);
       const totalItems = usage.length;
-      
+
       log(`Usage API: Filtered to ${totalItems} ingredients with usage, total cost: ${totalCost.toFixed(2)}`);
-      
+
       res.json({
         usage,
         summary: {
@@ -557,15 +777,189 @@ export async function registerRoutes(
     }
   });
 
+  // ============ STORE PURCHASE ITEMS (for Process page) ============
+  app.get("/api/store-purchase-items", async (req, res) => {
+    try {
+      const status = req.query.status as string;
+
+      let query = supabaseAdmin
+        .from('store_purchase_items')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (status === 'pending') {
+        // Items that still need processing
+        query = query.or('status.eq.pending,status.is.null');
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      // Filter to show only items with remaining quantity
+      const items = (data || []).filter((item: any) => {
+        const qty = Number(item.quantity) || 0;
+        const processed = Number(item.quantity_processed) || 0;
+        return qty > processed;
+      });
+
+      res.json(items);
+    } catch (error: any) {
+      log(`Error fetching store purchase items: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch purchase items" });
+    }
+  });
+
+  // ============ STORE PROCESSED ITEMS (for Process/Despatch pages) ============
+  app.get("/api/store-processed-items", async (req, res) => {
+    try {
+      const status = req.query.status as string;
+
+      let query = supabaseAdmin
+        .from('store_processed_items')
+        .select('*')
+        .order('processed_at', { ascending: false });
+
+      if (status) {
+        query = query.eq('status', status);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      res.json(data || []);
+    } catch (error: any) {
+      log(`Error fetching processed items: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch processed items" });
+    }
+  });
+
+  // Create processed item (pack for dispatch)
+  app.post("/api/store-processed-items", async (req, res) => {
+    try {
+      const { purchaseItemId, quantity, batchNumber, processedBy } = req.body;
+
+      // Get the purchase item
+      const { data: purchaseItem, error: fetchError } = await supabaseAdmin
+        .from('store_purchase_items')
+        .select('*')
+        .eq('id', purchaseItemId)
+        .single();
+
+      if (fetchError || !purchaseItem) {
+        return res.status(404).json({ message: "Purchase item not found" });
+      }
+
+      // Create processed item
+      const { data: processed, error: createError } = await supabaseAdmin
+        .from('store_processed_items')
+        .insert({
+          purchase_item_id: purchaseItemId,
+          item_name: purchaseItem.item_name,
+          quantity: parseFloat(quantity),
+          unit: purchaseItem.unit,
+          batch_number: batchNumber,
+          processed_by: processedBy,
+          status: 'ready',
+          processed_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (createError) throw createError;
+
+      // Update the purchase item's processed quantity
+      const newProcessed = (Number(purchaseItem.quantity_processed) || 0) + parseFloat(quantity);
+      const totalQty = Number(purchaseItem.quantity) || 0;
+
+      await supabaseAdmin
+        .from('store_purchase_items')
+        .update({
+          quantity_processed: newProcessed,
+          status: newProcessed >= totalQty ? 'fully_processed' : 'partially_processed',
+        })
+        .eq('id', purchaseItemId);
+
+      res.json(processed);
+    } catch (error: any) {
+      log(`Error creating processed item: ${error.message}`);
+      res.status(500).json({ message: "Failed to create processed item" });
+    }
+  });
+
+  // ============ STORE DESPATCHES (for Despatch page) ============
+  app.get("/api/store-despatches", async (req, res) => {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('store_despatches')
+        .select('*')
+        .order('despatch_date', { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+      res.json(data || []);
+    } catch (error: any) {
+      log(`Error fetching despatches: ${error.message}`);
+      res.status(500).json({ message: "Failed to fetch despatches" });
+    }
+  });
+
+  // Create despatch
+  app.post("/api/store-despatches", async (req, res) => {
+    try {
+      const { itemIds, sentBy, notes } = req.body;
+
+      if (!itemIds || itemIds.length === 0) {
+        return res.status(400).json({ message: "No items selected" });
+      }
+
+      // Get the items being dispatched
+      const { data: items, error: fetchError } = await supabaseAdmin
+        .from('store_processed_items')
+        .select('*')
+        .in('id', itemIds);
+
+      if (fetchError) throw fetchError;
+
+      // Calculate totals
+      const totalItems = items?.reduce((sum: number, item: any) => sum + (Number(item.quantity) || 0), 0) || 0;
+
+      // Create the despatch record
+      const { data: despatch, error: createError } = await supabaseAdmin
+        .from('store_despatches')
+        .insert({
+          destination: 'shop', // Default destination
+          total_items: totalItems,
+          sent_by: sentBy,
+          notes: notes,
+          status: 'pending',
+          despatch_date: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (createError) throw createError;
+
+      // Update processed items to 'dispatched'
+      await supabaseAdmin
+        .from('store_processed_items')
+        .update({ status: 'dispatched', despatch_id: despatch.id })
+        .in('id', itemIds);
+
+      res.json(despatch);
+    } catch (error: any) {
+      log(`Error creating despatch: ${error.message}`);
+      res.status(500).json({ message: "Failed to create despatch" });
+    }
+  });
+
   // Real-time ingredient usage based on transactions and recipes
   app.get("/api/realtime-usage", async (req, res) => {
     try {
       const client = getPosterPOSClient();
       const { from, to } = req.query;
-      
+
       let dateFrom: string;
       let dateTo: string;
-      
+
       // Frontend now sends dates in YYYYMMDD format directly (local timezone)
       if (from && /^\d{8}$/.test(from as string)) {
         dateFrom = from as string;
@@ -574,7 +968,7 @@ export async function registerRoutes(
       } else {
         dateFrom = new Date().toISOString().split('T')[0].replace(/-/g, '');
       }
-      
+
       if (to && /^\d{8}$/.test(to as string)) {
         dateTo = to as string;
       } else if (to) {
@@ -582,30 +976,30 @@ export async function registerRoutes(
       } else {
         dateTo = new Date().toISOString().split('T')[0].replace(/-/g, '');
       }
-      
+
       log(`Realtime usage: Fetching transactions from ${dateFrom} to ${dateTo}`);
-      
+
       // Get transactions for the date range
       const transactions = await client.getTransactions({ dateFrom, dateTo });
-      
+
       log(`Realtime usage: Got ${transactions.length} transactions`);
-      
+
       // Build a map of product recipes (cached per request)
       const recipeCache: Map<string, any> = new Map();
       // Track visited modifiers to prevent infinite loops
       const processedModifiers: Set<string> = new Set();
-      
+
       // Aggregate ingredient usage from all transactions
-      const ingredientUsage: Map<string, { 
-        id: string; 
-        name: string; 
-        quantity: number; 
+      const ingredientUsage: Map<string, {
+        id: string;
+        name: string;
+        quantity: number;
         unit: string;
         productsSold: Map<string, { name: string; count: number }>;
       }> = new Map();
-      
+
       let totalProductsSold = 0;
-      
+
       // Build a modifier name to recipe modifier lookup for faster matching
       const buildModifierNameLookup = (recipe: any): Map<string, any> => {
         const lookup = new Map<string, any>();
@@ -623,16 +1017,16 @@ export async function registerRoutes(
 
       for (const transaction of transactions) {
         if (!transaction.products || transaction.products.length === 0) continue;
-        
+
         // Fetch detailed transaction products with modificator_name
         const txProducts = await client.getTransactionProducts(transaction.transaction_id);
-        
+
         for (let lineIdx = 0; lineIdx < txProducts.length; lineIdx++) {
           const txProduct = txProducts[lineIdx];
           const productId = txProduct.product_id.toString();
           const quantitySold = parseFloat(txProduct.num) || 1;
           totalProductsSold += quantitySold;
-          
+
           // Get recipe for this product (cached)
           let recipe = recipeCache.get(productId);
           if (!recipe) {
@@ -641,14 +1035,14 @@ export async function registerRoutes(
               recipeCache.set(productId, recipe);
             }
           }
-          
+
           if (recipe) {
             // Process base recipe ingredients
             if (recipe.ingredients && recipe.ingredients.length > 0) {
               for (const ingredient of recipe.ingredients) {
                 const ingredientId = ingredient.ingredient_id;
                 const usageAmount = (ingredient.structure_netto || ingredient.structure_brutto) * quantitySold;
-                
+
                 const existing = ingredientUsage.get(ingredientId);
                 if (existing) {
                   existing.quantity += usageAmount;
@@ -671,41 +1065,41 @@ export async function registerRoutes(
                 }
               }
             }
-            
+
             // Process selected modifiers using modificator_name from transaction products
             if (txProduct.modificator_name && recipe.group_modifications) {
               const modifierLookup = buildModifierNameLookup(recipe);
-              
+
               // Parse comma-separated modifier names
               const selectedModifierNames = txProduct.modificator_name
                 .split(',')
                 .map((name: string) => name.toLowerCase().trim())
                 .filter((name: string) => name.length > 0);
-              
+
               // Debug: Log modifier matching for Pure & Simple
               if (recipe.product_name?.toLowerCase().includes('pure') || recipe.product_name?.toLowerCase().includes('simple')) {
                 log(`DEBUG Pure&Simple: Matched modifiers from "${txProduct.modificator_name}": [${selectedModifierNames.join(', ')}]`);
               }
-              
+
               for (const modName of selectedModifierNames) {
                 // Track to prevent double-processing within same line item
                 const modKey = `${transaction.transaction_id}-${lineIdx}-${modName}`;
                 if (processedModifiers.has(modKey)) continue;
                 processedModifiers.add(modKey);
-                
+
                 // Find the matching modifier in the recipe
                 const mod = modifierLookup.get(modName);
                 if (mod) {
                   const modQty = 1; // Each selected modifier counts once
                   const trackingKey = `${productId}-mod-${modName}`;
-                  
+
                   // Process modifier with ingredient_id (type 10 = ingredient modifier)
                   if (mod.ingredient_id && mod.ingredient_id !== '0' && mod.ingredient_id !== 0) {
                     // Normalize ingredient ID to string
                     const modIngredientId = mod.ingredient_id.toString();
                     // Direct ingredient modifier - use netto with brutto fallback
                     const usageAmount = (mod.netto || mod.brutto) * modQty * quantitySold;
-                    
+
                     if (usageAmount > 0) {
                       const existing = ingredientUsage.get(modIngredientId);
                       if (existing) {
@@ -729,7 +1123,7 @@ export async function registerRoutes(
                       }
                     }
                   }
-                  
+
                   // Check if modifier references a product/dish (type 2/3) that needs recipe lookup
                   if ((mod.type === '2' || mod.type === '3') && mod.product_id) {
                     const modProductId = mod.product_id;
@@ -738,12 +1132,12 @@ export async function registerRoutes(
                       modRecipe = await client.getProductWithRecipe(modProductId);
                       if (modRecipe) recipeCache.set(modProductId, modRecipe);
                     }
-                    
+
                     if (modRecipe && modRecipe.ingredients) {
                       for (const modIng of modRecipe.ingredients) {
                         const modSubIngId = modIng.ingredient_id.toString();
                         const usageAmount = (modIng.structure_netto || modIng.structure_brutto) * modQty * quantitySold;
-                        
+
                         const existing = ingredientUsage.get(modSubIngId);
                         if (existing) {
                           existing.quantity += usageAmount;
@@ -773,7 +1167,7 @@ export async function registerRoutes(
           }
         }
       }
-      
+
       // Convert to array and sort by quantity
       const usage = Array.from(ingredientUsage.values())
         .map(item => ({
@@ -784,9 +1178,9 @@ export async function registerRoutes(
           products: Array.from(item.productsSold.values()),
         }))
         .sort((a, b) => b.quantity - a.quantity);
-      
+
       log(`Realtime usage: Found ${usage.length} ingredients used across ${transactions.length} transactions`);
-      
+
       res.json({
         usage,
         summary: {
@@ -808,24 +1202,24 @@ export async function registerRoutes(
     try {
       const client = getPosterPOSClient();
       const { productId } = req.params;
-      
+
       // Get the product recipe
       const recipe = await client.getProductWithRecipe(productId);
-      
+
       if (!recipe) {
         return res.status(404).json({ message: "Product not found" });
       }
-      
+
       // Get recent transactions that include this product
       const today = new Date();
       const weekAgo = new Date();
       weekAgo.setDate(weekAgo.getDate() - 7);
-      
+
       const dateFrom = weekAgo.toISOString().split('T')[0].replace(/-/g, '');
       const dateTo = today.toISOString().split('T')[0].replace(/-/g, '');
-      
+
       const transactions = await client.getTransactions({ dateFrom, dateTo });
-      
+
       // Filter transactions that contain this product
       const productTransactions = transactions
         .filter(tx => tx.products?.some(p => p.product_id.toString() === productId))
@@ -839,7 +1233,7 @@ export async function registerRoutes(
             modifications: p.modifications,
           })),
         }));
-      
+
       res.json({
         recipe: {
           product_id: recipe.product_id,
@@ -882,11 +1276,11 @@ export async function registerRoutes(
       // Handle transaction events
       if (object === 'transaction' && (action === 'added' || action === 'closed')) {
         const transaction = data;
-        
+
         // Calculate total
         let totalAmount = 0;
         const items: string[] = [];
-        
+
         if (transaction.products) {
           for (const product of transaction.products) {
             totalAmount += Number(product.product_sum || 0);
@@ -946,23 +1340,23 @@ export async function registerRoutes(
   app.get("/api/sales/range", async (req, res) => {
     try {
       const { from, to } = req.query;
-      
+
       let fromDate = from ? new Date(from as string) : new Date();
       let toDate = to ? new Date(to as string) : new Date();
-      
+
       // Default to last 7 days if no dates provided
       if (!from) {
         fromDate.setDate(fromDate.getDate() - 7);
       }
-      
+
       // Set end of day for toDate
       toDate.setHours(23, 59, 59, 999);
-      
+
       const sales = await storage.getSalesRecordsSince(fromDate);
       const filtered = sales.filter(s => new Date(s.timestamp) <= toDate);
-      
+
       const total = filtered.reduce((sum, s) => sum + Number(s.amount), 0);
-      
+
       res.json({
         sales: filtered,
         summary: {
@@ -984,13 +1378,13 @@ export async function registerRoutes(
       if (!isPosterPOSInitialized()) {
         return res.status(503).json({ message: "PosterPOS not configured" });
       }
-      
+
       const client = getPosterPOSClient();
       const { from, to } = req.query;
-      
+
       let dateFrom: string;
       let dateTo: string;
-      
+
       // Helper to get local date in YYYYMMDD format (EAT timezone)
       const getLocalDateYYYYMMDD = (date: Date = new Date()): string => {
         const year = date.getFullYear();
@@ -998,7 +1392,7 @@ export async function registerRoutes(
         const day = String(date.getDate()).padStart(2, '0');
         return `${year}${month}${day}`;
       };
-      
+
       // Frontend sends dates in YYYYMMDD format directly (local timezone)
       if (from && /^\d{8}$/.test(from as string)) {
         dateFrom = from as string;
@@ -1007,7 +1401,7 @@ export async function registerRoutes(
       } else {
         dateFrom = getLocalDateYYYYMMDD();
       }
-      
+
       if (to && /^\d{8}$/.test(to as string)) {
         dateTo = to as string;
       } else if (to) {
@@ -1015,14 +1409,14 @@ export async function registerRoutes(
       } else {
         dateTo = getLocalDateYYYYMMDD();
       }
-      
+
       log(`Payments: Fetching transactions from ${dateFrom} to ${dateTo}`);
-      
+
       // Get transactions for the date range
       const transactions = await client.getTransactions({ dateFrom, dateTo });
-      
+
       log(`Payments: Got ${transactions.length} transactions`);
-      
+
       // Aggregate by payment method
       let cashTotal = 0;
       let cardTotal = 0;
@@ -1030,12 +1424,12 @@ export async function registerRoutes(
       let cardCount = 0;
       const cashTransactions: any[] = [];
       const cardTransactions: any[] = [];
-      
+
       for (const tx of transactions) {
         const payedCash = parseFloat(tx.payed_cash || '0') / 100; // Convert from cents
         const payedCard = parseFloat(tx.payed_card || '0') / 100; // Convert from cents
         const txSum = parseFloat(tx.payed_sum || tx.sum || '0') / 100;
-        
+
         // Robust date parsing: handle both numeric epoch (milliseconds) and ISO strings
         let dateCloseTs: number;
         if (/^\d+$/.test(tx.date_close)) {
@@ -1043,29 +1437,29 @@ export async function registerRoutes(
         } else {
           dateCloseTs = new Date(tx.date_close).getTime();
         }
-        
+
         const txInfo = {
           transaction_id: tx.transaction_id,
           date_close: new Date(dateCloseTs).toISOString(),
           amount: txSum,
           table_name: tx.table_name || 'Counter',
         };
-        
+
         if (payedCash > 0) {
           cashTotal += payedCash;
           cashCount++;
           cashTransactions.push({ ...txInfo, amount: payedCash, method: 'Cash' });
         }
-        
+
         if (payedCard > 0) {
           cardTotal += payedCard;
           cardCount++;
           cardTransactions.push({ ...txInfo, amount: payedCard, method: 'Card/M-Pesa' });
         }
       }
-      
+
       const grandTotal = cashTotal + cardTotal;
-      
+
       res.json({
         summary: {
           total: grandTotal,
@@ -1095,7 +1489,7 @@ export async function registerRoutes(
   });
 
   // ============ MAIN STORE ADMIN ROUTES ============
-  
+
   // Store Items CRUD
   app.get("/api/store/items", async (req, res) => {
     try {
@@ -1162,11 +1556,11 @@ export async function registerRoutes(
     try {
       const { purchase, items } = req.body;
       const { eq, sql } = await import("drizzle-orm");
-      
+
       // Create purchase record
       const purchaseData = insertStorePurchaseSchema.parse(purchase);
       const [newPurchase] = await db.insert(storePurchases).values(purchaseData).returning();
-      
+
       // Create purchase items and update stock
       const createdItems = [];
       for (const item of items) {
@@ -1176,18 +1570,18 @@ export async function registerRoutes(
         };
         const [purchaseItem] = await db.insert(storePurchaseItems).values(itemData).returning();
         createdItems.push(purchaseItem);
-        
+
         // Update store item stock if linked
         if (item.storeItemId) {
           await db.update(storeItems)
-            .set({ 
+            .set({
               currentStock: sql`${storeItems.currentStock} + ${item.quantity}`,
               updatedAt: new Date()
             })
             .where(eq(storeItems.id, item.storeItemId));
         }
       }
-      
+
       res.status(201).json({ purchase: newPurchase, items: createdItems });
     } catch (error: any) {
       log(`Error creating store purchase: ${error.message}`);
@@ -1228,46 +1622,46 @@ export async function registerRoutes(
     try {
       const data = insertStoreProcessedItemSchema.parse(req.body);
       const { eq, sql } = await import("drizzle-orm");
-      
+
       // Validate quantity bounds if linked to purchase item
       if (data.purchaseItemId) {
         const [purchaseItem] = await db.select().from(storePurchaseItems)
           .where(eq(storePurchaseItems.id, data.purchaseItemId));
-        
+
         if (!purchaseItem) {
           return res.status(400).json({ message: "Purchase item not found" });
         }
-        
+
         const pendingQty = Number(purchaseItem.quantity) - Number(purchaseItem.quantityProcessed);
         if (Number(data.quantity) > pendingQty) {
-          return res.status(400).json({ 
-            message: `Cannot process ${data.quantity}. Only ${pendingQty} pending.` 
+          return res.status(400).json({
+            message: `Cannot process ${data.quantity}. Only ${pendingQty} pending.`
           });
         }
       }
-      
+
       const [item] = await db.insert(storeProcessedItems).values(data).returning();
-      
+
       // Update purchase item processed quantity if linked
       if (data.purchaseItemId) {
         await db.update(storePurchaseItems)
-          .set({ 
+          .set({
             quantityProcessed: sql`${storePurchaseItems.quantityProcessed} + ${data.quantity}`,
             status: 'partially_processed'
           })
           .where(eq(storePurchaseItems.id, data.purchaseItemId));
       }
-      
+
       // Reduce store stock (items are packed from warehouse stock)
       if (data.storeItemId) {
         await db.update(storeItems)
-          .set({ 
+          .set({
             currentStock: sql`${storeItems.currentStock} - ${data.quantity}`,
             updatedAt: new Date()
           })
           .where(eq(storeItems.id, data.storeItemId));
       }
-      
+
       res.status(201).json(item);
     } catch (error: any) {
       log(`Error creating processed item: ${error.message}`);
@@ -1304,14 +1698,14 @@ export async function registerRoutes(
     try {
       const { despatch, items } = req.body;
       const { eq } = await import("drizzle-orm");
-      
+
       // Create despatch record
       const despatchData = insertStoreDespatchSchema.parse({
         ...despatch,
         totalItems: items.length,
       });
       const [newDespatch] = await db.insert(storeDespatches).values(despatchData).returning();
-      
+
       // Create despatch items and update processed item status
       const createdItems = [];
       for (const item of items) {
@@ -1321,7 +1715,7 @@ export async function registerRoutes(
         };
         const [despatchItem] = await db.insert(storeDespatchItems).values(itemData).returning();
         createdItems.push(despatchItem);
-        
+
         // Update processed item status
         if (item.processedItemId) {
           await db.update(storeProcessedItems)
@@ -1329,7 +1723,7 @@ export async function registerRoutes(
             .where(eq(storeProcessedItems.id, item.processedItemId));
         }
       }
-      
+
       res.status(201).json({ despatch: newDespatch, items: createdItems });
     } catch (error: any) {
       log(`Error creating despatch: ${error.message}`);
@@ -1424,7 +1818,7 @@ export async function registerRoutes(
         res.status(503).json({ message: "Telegram bot not configured" });
         return;
       }
-      
+
       const bot = getTelegramBot();
       await bot.processWebhookUpdate(req.body);
       res.sendStatus(200);
@@ -1439,12 +1833,12 @@ export async function registerRoutes(
     try {
       const weekAgo = new Date();
       weekAgo.setDate(weekAgo.getDate() - 7);
-      
+
       const sales = await storage.getSalesRecordsSince(weekAgo);
-      
+
       // Group by day
       const dailyData: Record<string, { sales: number; count: number }> = {};
-      
+
       sales.forEach(sale => {
         const day = new Date(sale.timestamp).toLocaleDateString('en-US', { weekday: 'short' });
         if (!dailyData[day]) {
@@ -1468,7 +1862,7 @@ export async function registerRoutes(
   });
 
   // ============ SHOP STOCK SESSIONS ============
-  
+
   // Get current or create new stock session
   app.get("/api/shop/stock/session/:type", async (req, res) => {
     try {
@@ -1477,7 +1871,7 @@ export async function registerRoutes(
         res.status(400).json({ message: "Invalid session type" });
         return;
       }
-      
+
       const session = await storage.getTodaysStockSession(type);
       if (session) {
         const entries = await storage.getStockEntriesBySession(session.id);
@@ -1495,12 +1889,12 @@ export async function registerRoutes(
   app.post("/api/shop/stock/session", async (req, res) => {
     try {
       const { sessionType, staffName } = req.body;
-      
+
       if (!sessionType || !staffName) {
         res.status(400).json({ message: "sessionType and staffName are required" });
         return;
       }
-      
+
       // Check if session already exists for today
       const existing = await storage.getTodaysStockSession(sessionType);
       if (existing && existing.status === 'in_progress') {
@@ -1508,10 +1902,10 @@ export async function registerRoutes(
         res.json({ session: existing, entries, resumed: true });
         return;
       }
-      
+
       // Get inventory items count
       const items = await storage.getAllInventoryItems();
-      
+
       const session = await storage.createStockSession({
         sessionType,
         staffName,
@@ -1519,7 +1913,7 @@ export async function registerRoutes(
         totalItems: items.length,
         countedItems: 0,
       });
-      
+
       res.status(201).json({ session, entries: [], items });
     } catch (error: any) {
       log(`Error creating stock session: ${error.message}`);
@@ -1531,12 +1925,12 @@ export async function registerRoutes(
   app.post("/api/shop/stock/entry", async (req, res) => {
     try {
       const { sessionId, itemName, quantity, unit, inventoryItemId, posterPosId, notes } = req.body;
-      
+
       if (!sessionId || !itemName || quantity === undefined) {
         res.status(400).json({ message: "sessionId, itemName, and quantity are required" });
         return;
       }
-      
+
       const entry = await storage.createStockEntry({
         sessionId,
         itemName,
@@ -1546,7 +1940,7 @@ export async function registerRoutes(
         posterPosId,
         notes,
       });
-      
+
       // Update session counted items
       const session = await storage.getStockSession(sessionId);
       if (session) {
@@ -1554,7 +1948,7 @@ export async function registerRoutes(
           countedItems: (session.countedItems || 0) + 1,
         });
       }
-      
+
       res.status(201).json(entry);
     } catch (error: any) {
       log(`Error saving stock entry: ${error.message}`);
@@ -1566,17 +1960,17 @@ export async function registerRoutes(
   app.patch("/api/shop/stock/session/:id/complete", async (req, res) => {
     try {
       const { id } = req.params;
-      
+
       const session = await storage.updateStockSession(id, {
         status: 'completed',
         completedAt: new Date(),
       });
-      
+
       if (!session) {
         res.status(404).json({ message: "Session not found" });
         return;
       }
-      
+
       // If this is closing stock, trigger reconciliation
       if (session.sessionType === 'closing') {
         const openingSession = await storage.getTodaysStockSession('opening');
@@ -1589,7 +1983,7 @@ export async function registerRoutes(
           }
         }
       }
-      
+
       res.json(session);
     } catch (error: any) {
       log(`Error completing session: ${error.message}`);
@@ -1609,7 +2003,7 @@ export async function registerRoutes(
   });
 
   // ============ GOODS RECEIVED ============
-  
+
   // Get pending dispatches from store
   app.get("/api/shop/goods/pending", async (req, res) => {
     try {
@@ -1636,12 +2030,12 @@ export async function registerRoutes(
   app.post("/api/shop/goods/receive", async (req, res) => {
     try {
       const { despatchLogId, receivedBy, items, notes } = req.body;
-      
+
       if (!receivedBy || !items || !Array.isArray(items)) {
         res.status(400).json({ message: "receivedBy and items array are required" });
         return;
       }
-      
+
       // Create the receipt
       const receipt = await storage.createGoodsReceipt({
         despatchLogId,
@@ -1649,7 +2043,7 @@ export async function registerRoutes(
         status: 'received',
         notes,
       });
-      
+
       // Add items to receipt
       for (const item of items) {
         await storage.createGoodsReceiptItem({
@@ -1664,13 +2058,13 @@ export async function registerRoutes(
           notes: item.notes,
         });
       }
-      
+
       // Generate Excel file
       const excelPath = await generateGoodsReceiptExcel(receipt.id);
       if (excelPath) {
         await storage.updateGoodsReceipt(receipt.id, { excelFilePath: excelPath });
       }
-      
+
       res.status(201).json({ receipt, excelPath });
     } catch (error: any) {
       log(`Error receiving goods: ${error.message}`);
@@ -1683,15 +2077,15 @@ export async function registerRoutes(
     try {
       const { id } = req.params;
       const receipt = await storage.getGoodsReceipt(id);
-      
+
       if (!receipt) {
         res.status(404).json({ message: "Receipt not found" });
         return;
       }
-      
+
       // Generate fresh Excel file
       const excelBuffer = await generateGoodsReceiptExcelBuffer(id);
-      
+
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.setHeader('Content-Disposition', `attachment; filename=goods_receipt_${id}.xlsx`);
       res.send(excelBuffer);
@@ -1702,29 +2096,29 @@ export async function registerRoutes(
   });
 
   // ============ SHOP EXPENSES ============
-  
+
   // Get all expenses
   app.get("/api/shop/expenses", async (req, res) => {
     try {
       const { type } = req.query;
-      
+
       let expenses;
       if (type) {
         expenses = await storage.getExpensesByType(type as string);
       } else {
         expenses = await storage.getAllExpenses();
       }
-      
+
       // Get items for supermarket expenses
       const expensesWithItems = await Promise.all(
         expenses.map(async (expense) => {
-          const items = expense.expenseType === 'supermarket' 
+          const items = expense.expenseType === 'supermarket'
             ? await storage.getExpenseItems(expense.id)
             : [];
           return { ...expense, items };
         })
       );
-      
+
       res.json(expensesWithItems);
     } catch (error: any) {
       log(`Error fetching expenses: ${error.message}`);
@@ -1737,14 +2131,14 @@ export async function registerRoutes(
     try {
       const expenses = await storage.getTodaysExpenses();
       const total = expenses.reduce((sum, e) => sum + Number(e.amount), 0);
-      
+
       // Group by category
       const byCategory: Record<string, number> = {};
       expenses.forEach(e => {
         const cat = e.category || e.expenseType;
         byCategory[cat] = (byCategory[cat] || 0) + Number(e.amount);
       });
-      
+
       res.json({ expenses, total, byCategory });
     } catch (error: any) {
       log(`Error fetching today's expenses: ${error.message}`);
@@ -1756,12 +2150,12 @@ export async function registerRoutes(
   app.post("/api/shop/expenses", async (req, res) => {
     try {
       const { expenseType, category, description, amount, paidBy, paidTo, receiptNumber, notes, items } = req.body;
-      
+
       if (!expenseType || !description || !amount || !paidBy) {
         res.status(400).json({ message: "expenseType, description, amount, and paidBy are required" });
         return;
       }
-      
+
       const expense = await storage.createExpense({
         expenseType,
         category,
@@ -1772,7 +2166,7 @@ export async function registerRoutes(
         receiptNumber,
         notes,
       });
-      
+
       // If supermarket expense with items, add them
       if (expenseType === 'supermarket' && items && Array.isArray(items)) {
         for (const item of items) {
@@ -1786,7 +2180,7 @@ export async function registerRoutes(
           });
         }
       }
-      
+
       res.status(201).json(expense);
     } catch (error: any) {
       log(`Error creating expense: ${error.message}`);
@@ -1795,7 +2189,7 @@ export async function registerRoutes(
   });
 
   // ============ RECONCILIATION ============
-  
+
   // Get today's reconciliation
   app.get("/api/shop/reconciliation/today", async (req, res) => {
     try {
@@ -1812,17 +2206,17 @@ export async function registerRoutes(
     try {
       const openingSession = await storage.getTodaysStockSession('opening');
       const closingSession = await storage.getTodaysStockSession('closing');
-      
+
       if (!openingSession || openingSession.status !== 'completed') {
         res.status(400).json({ message: "Opening stock must be completed first" });
         return;
       }
-      
+
       if (!closingSession || closingSession.status !== 'completed') {
         res.status(400).json({ message: "Closing stock must be completed first" });
         return;
       }
-      
+
       const result = await calculateAndSendReconciliation(openingSession.id, closingSession.id);
       res.json(result);
     } catch (error: any) {
@@ -1835,17 +2229,17 @@ export async function registerRoutes(
   async function calculateAndSendReconciliation(openingId: string, closingId: string) {
     const openingEntries = await storage.getStockEntriesBySession(openingId);
     const closingEntries = await storage.getStockEntriesBySession(closingId);
-    
+
     // Get goods received today
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const receipts = await storage.getAllGoodsReceipts(20);
     const todayReceipts = receipts.filter(r => new Date(r.receivedAt) >= today);
-    
+
     // Build lookup maps
     const openingMap = new Map(openingEntries.map(e => [e.itemName, Number(e.quantity)]));
     const closingMap = new Map(closingEntries.map(e => [e.itemName, Number(e.quantity)]));
-    
+
     // Calculate received quantities per item
     const receivedMap = new Map<string, number>();
     for (const receipt of todayReceipts) {
@@ -1855,13 +2249,13 @@ export async function registerRoutes(
         receivedMap.set(item.itemName, current + Number(item.receivedQuantity || 0));
       }
     }
-    
+
     // Calculate variances
     const allItems = new Set([...Array.from(openingMap.keys()), ...Array.from(closingMap.keys())]);
     let overItems = 0;
     let underItems = 0;
     let matchedItems = 0;
-    
+
     const details: Array<{
       item: string;
       opening: number;
@@ -1871,14 +2265,14 @@ export async function registerRoutes(
       variance: number;
       status: 'over' | 'under' | 'equal';
     }> = [];
-    
+
     allItems.forEach(itemName => {
       const opening = openingMap.get(itemName) || 0;
       const received = receivedMap.get(itemName) || 0;
       const closing = closingMap.get(itemName) || 0;
       const expected = opening + received;
       const variance = closing - expected;
-      
+
       let status: 'over' | 'under' | 'equal';
       if (variance > 0) {
         status = 'over';
@@ -1890,10 +2284,10 @@ export async function registerRoutes(
         status = 'equal';
         matchedItems++;
       }
-      
+
       details.push({ item: itemName, opening, received, expected, closing, variance, status });
     });
-    
+
     // Save reconciliation
     const recon = await storage.createReconciliation({
       date: new Date(),
@@ -1904,36 +2298,36 @@ export async function registerRoutes(
       underItems,
       matchedItems,
     });
-    
+
     // Send to owner via Telegram
     if (isTelegramBotInitialized()) {
       try {
         const bot = getTelegramBot();
-        
-        const overDetails = details.filter(d => d.status === 'over').map(d => 
+
+        const overDetails = details.filter(d => d.status === 'over').map(d =>
           `  ${d.item}: +${d.variance} (expected ${d.expected}, found ${d.closing})`
         ).join('\n');
-        
-        const underDetails = details.filter(d => d.status === 'under').map(d => 
+
+        const underDetails = details.filter(d => d.status === 'under').map(d =>
           `  ${d.item}: ${d.variance} (expected ${d.expected}, found ${d.closing})`
         ).join('\n');
-        
+
         let message = `📊 *Daily Stock Reconciliation*\n\n`;
         message += `📅 Date: ${new Date().toLocaleDateString()}\n\n`;
         message += `✅ Matched: ${matchedItems} items\n`;
         message += `⬆️ Over: ${overItems} items\n`;
         message += `⬇️ Under: ${underItems} items\n\n`;
-        
+
         if (overItems > 0) {
           message += `*Items OVER:*\n${overDetails}\n\n`;
         }
-        
+
         if (underItems > 0) {
           message += `*Items UNDER:*\n${underDetails}\n`;
         }
-        
+
         await bot.sendNotification(message, 'owner');
-        
+
         await storage.updateReconciliation(recon.id, {
           status: 'sent',
           sentToOwnerAt: new Date(),
@@ -1942,7 +2336,7 @@ export async function registerRoutes(
         log(`Failed to send reconciliation to owner: ${e}`);
       }
     }
-    
+
     return { reconciliation: recon, details };
   }
 
@@ -1952,15 +2346,15 @@ export async function registerRoutes(
       const ExcelJS = require('exceljs');
       const fs = require('fs');
       const path = require('path');
-      
+
       const receipt = await storage.getGoodsReceipt(receiptId);
       if (!receipt) return null;
-      
+
       const items = await storage.getGoodsReceiptItems(receiptId);
-      
+
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Goods Receipt');
-      
+
       // PosterPOS Add Supply format
       worksheet.columns = [
         { header: 'Product Name', key: 'name', width: 30 },
@@ -1970,7 +2364,7 @@ export async function registerRoutes(
         { header: 'Total Cost', key: 'total', width: 15 },
         { header: 'Notes', key: 'notes', width: 20 },
       ];
-      
+
       items.forEach(item => {
         const cost = Number(item.costPerUnit || 0);
         const qty = Number(item.receivedQuantity || 0);
@@ -1983,7 +2377,7 @@ export async function registerRoutes(
           notes: item.notes || '',
         });
       });
-      
+
       // Style header row
       worksheet.getRow(1).font = { bold: true };
       worksheet.getRow(1).fill = {
@@ -1991,18 +2385,18 @@ export async function registerRoutes(
         pattern: 'solid',
         fgColor: { argb: 'FFE0E0E0' },
       };
-      
+
       // Create exports directory if needed
       const dir = './exports';
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-      
+
       const filename = `goods_receipt_${receiptId}_${Date.now()}.xlsx`;
       const filepath = path.join(dir, filename);
-      
+
       await workbook.xlsx.writeFile(filepath);
-      
+
       return filepath;
     } catch (error) {
       log(`Error generating Excel: ${error}`);
@@ -2013,15 +2407,15 @@ export async function registerRoutes(
   // Helper to generate Excel buffer for download
   async function generateGoodsReceiptExcelBuffer(receiptId: string): Promise<Buffer> {
     const ExcelJS = require('exceljs');
-    
+
     const receipt = await storage.getGoodsReceipt(receiptId);
     if (!receipt) throw new Error('Receipt not found');
-    
+
     const items = await storage.getGoodsReceiptItems(receiptId);
-    
+
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Goods Receipt');
-    
+
     worksheet.columns = [
       { header: 'Product Name', key: 'name', width: 30 },
       { header: 'Quantity', key: 'qty', width: 12 },
@@ -2030,7 +2424,7 @@ export async function registerRoutes(
       { header: 'Total Cost', key: 'total', width: 15 },
       { header: 'Notes', key: 'notes', width: 20 },
     ];
-    
+
     items.forEach(item => {
       const cost = Number(item.costPerUnit || 0);
       const qty = Number(item.receivedQuantity || 0);
@@ -2043,9 +2437,9 @@ export async function registerRoutes(
         notes: item.notes || '',
       });
     });
-    
+
     worksheet.getRow(1).font = { bold: true };
-    
+
     return await workbook.xlsx.writeBuffer();
   }
 
@@ -2056,6 +2450,18 @@ export async function registerRoutes(
       telegram: !!telegramToken,
     });
   });
+
+  // ============ ENHANCED INVENTORY ROUTES (Supabase-powered) ============
+  // Mount the new v2 API routes for enhanced inventory tracking
+  app.use("/api/v2", inventoryRoutes);
+  log('Enhanced inventory routes mounted at /api/v2');
+
+  // ============ PORTAL ROUTES ============
+  app.use("/api/store-portal", storePortalRoutes);
+  app.use("/api/shop-portal", shopPortalRoutes);
+  app.use("/api/partner", partnerPortalRoutes);
+  app.use("/api/insights", insightsRoutes);
+  log('Portal routes mounted: /api/store-portal, /api/shop-portal, /api/partner, /api/insights');
 
   return httpServer;
 }

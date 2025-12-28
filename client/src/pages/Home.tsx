@@ -6,30 +6,39 @@ import { Badge } from "@/components/ui/badge";
 export default function Home() {
   const apps = [
     {
-      id: "owner",
-      name: "Poster Owner",
-      description: "Sales analytics & management",
-      initial: "OW",
-      color: "bg-blue-500",
-      route: "/owner",
-      notifications: 3,
+      id: "partner",
+      name: "Partner Portal",
+      description: "Full visibility & approvals",
+      initial: "PA",
+      color: "bg-indigo-500",
+      route: "/partner",
+      notifications: 0,
     },
     {
       id: "store",
-      name: "Poster Store",
-      description: "Inventory & Dispatch",
+      name: "Store Portal",
+      description: "Buy, Process & Dispatch",
       initial: "ST",
       color: "bg-emerald-500",
       route: "/store",
-      notifications: 12,
+      notifications: 0,
     },
     {
       id: "shop",
-      name: "Poster Shop",
-      description: "POS & Orders",
+      name: "Shop Portal",
+      description: "Shifts, Expenses & Stock",
       initial: "SH",
       color: "bg-orange-500",
       route: "/shop",
+      notifications: 0,
+    },
+    {
+      id: "owner",
+      name: "Owner Dashboard",
+      description: "Sales analytics (legacy)",
+      initial: "OW",
+      color: "bg-blue-500",
+      route: "/owner",
       notifications: 0,
     },
     {
@@ -52,7 +61,7 @@ export default function Home() {
           </div>
         </div>
         <div className="h-8 w-8 rounded-full bg-blue-500/20 p-1.5 text-blue-500">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>
         </div>
       </header>
 
@@ -78,7 +87,7 @@ export default function Home() {
             </div>
           </Link>
         ))}
-        
+
         {[1, 2, 3].map((i) => (
           <div key={i} className="flex items-center gap-3 border-b border-white/5 px-4 py-3 opacity-50">
             <Avatar className="h-12 w-12 bg-gray-700">

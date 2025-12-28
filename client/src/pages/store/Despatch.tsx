@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { MobileShell } from "@/components/layout/MobileShell";
-import { BottomNav } from "@/components/layout/BottomNav";
+import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Truck, Loader2, Package, CheckCircle, Clock, Send } from "lucide-react";
+import { Truck, Loader2, Package, CheckCircle, Clock, Send, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { StoreProcessedItem, StoreDespatch as StoreDespatchType } from "@shared/schema";
@@ -63,7 +62,7 @@ export default function StoreDespatch() {
   });
 
   const toggleItem = (id: string) => {
-    setSelectedItems(prev => 
+    setSelectedItems(prev =>
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
   };
@@ -92,74 +91,95 @@ export default function StoreDespatch() {
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "pending":
-        return <Badge variant="secondary" className="text-xs bg-yellow-100 text-yellow-700">Pending</Badge>;
+        return <Badge variant="secondary" className="text-xs bg-yellow-900/30 text-yellow-400 border-yellow-700">Pending</Badge>;
       case "in_transit":
-        return <Badge variant="secondary" className="text-xs bg-blue-100 text-blue-700">In Transit</Badge>;
+        return <Badge variant="secondary" className="text-xs bg-blue-900/30 text-blue-400 border-blue-700">In Transit</Badge>;
       case "delivered":
-        return <Badge variant="outline" className="text-xs text-green-600 border-green-200 bg-green-50">Delivered</Badge>;
+        return <Badge variant="outline" className="text-xs text-emerald-400 border-emerald-600 bg-emerald-900/20">Delivered</Badge>;
       case "confirmed":
-        return <Badge variant="outline" className="text-xs text-green-600 border-green-200 bg-green-50">Confirmed</Badge>;
+        return <Badge variant="outline" className="text-xs text-emerald-400 border-emerald-600 bg-emerald-900/20">Confirmed</Badge>;
       default:
-        return <Badge variant="outline" className="text-xs">{status}</Badge>;
+        return <Badge variant="outline" className="text-xs text-slate-400 border-slate-600">{status}</Badge>;
     }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
       case "pending":
-        return <Clock className="h-4 w-4 text-yellow-600" />;
+        return <Clock className="h-4 w-4 text-yellow-500" />;
       case "in_transit":
-        return <Truck className="h-4 w-4 text-blue-600" />;
+        return <Truck className="h-4 w-4 text-blue-500" />;
       case "delivered":
       case "confirmed":
-        return <CheckCircle className="h-4 w-4 text-green-600" />;
+        return <CheckCircle className="h-4 w-4 text-emerald-500" />;
       default:
-        return <Package className="h-4 w-4 text-muted-foreground" />;
+        return <Package className="h-4 w-4 text-slate-500" />;
     }
   };
 
   const readyItems = processedItems.filter(i => i.status === 'ready');
 
   return (
-    <MobileShell theme="store" className="pb-20">
-      <header className="sticky top-0 z-10 bg-background/80 backdrop-blur-md px-6 py-4 border-b">
-        <h1 className="text-xl font-bold tracking-tight text-primary" data-testid="text-page-title">Despatch</h1>
-      </header>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 p-6">
+      <div className="max-w-4xl mx-auto">
+        {/* Header */}
+        <div className="mb-6">
+          <Link href="/store">
+            <Button variant="ghost" className="text-slate-400 hover:text-white mb-4">
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Store
+            </Button>
+          </Link>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-white mb-2">Despatch</h1>
+              <p className="text-slate-400">Manage shipments to partner locations</p>
+            </div>
+            <div className="h-12 w-12 rounded-full bg-blue-600 flex items-center justify-center">
+              <Truck className="h-6 w-6 text-white" />
+            </div>
+          </div>
+        </div>
 
-      <main className="p-4 space-y-4">
         <Tabs defaultValue="send" className="w-full">
-          <TabsList className="w-full grid grid-cols-2">
-            <TabsTrigger value="send" data-testid="tab-send">Send ({readyItems.length})</TabsTrigger>
-            <TabsTrigger value="history" data-testid="tab-history">History</TabsTrigger>
+          <TabsList className="bg-slate-800 border border-slate-700 w-full justify-start p-1 h-auto">
+            <TabsTrigger value="send" className="px-6 data-[state=active]:bg-blue-600 data-[state=active]:text-white">
+              Send ({readyItems.length})
+            </TabsTrigger>
+            <TabsTrigger value="history" className="px-6 data-[state=active]:bg-purple-600 data-[state=active]:text-white">
+              History
+            </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="send" className="space-y-4 mt-4">
+          <TabsContent value="send" className="space-y-4 mt-6">
             {itemsLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-slate-500" />
               </div>
             ) : readyItems.length === 0 ? (
-              <Card className="p-8 text-center">
-                <Package className="h-12 w-12 mx-auto text-muted-foreground/50 mb-2" />
-                <p className="text-muted-foreground">No items ready for despatch</p>
-                <p className="text-xs text-muted-foreground mt-1">Pack items in Process tab first</p>
+              <Card className="bg-slate-800/30 border-slate-700">
+                <CardContent className="py-12 text-center">
+                  <Package className="h-16 w-16 text-slate-600 mx-auto mb-4" />
+                  <h2 className="text-xl font-bold text-white mb-2">No Items Ready</h2>
+                  <p className="text-slate-400">Pack items in Process tab first.</p>
+                </CardContent>
               </Card>
             ) : (
               <>
-                <Card className="border-none shadow-md">
+                <Card className="bg-slate-800/50 border-slate-700">
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2">
-                        <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                        <div className="h-8 w-8 rounded-full bg-blue-900/40 border border-blue-700/50 flex items-center justify-center text-blue-400">
                           <Truck className="h-4 w-4" />
                         </div>
-                        <h2 className="font-semibold">Select Items to Send</h2>
+                        <h2 className="font-semibold text-white">Select Items to Send</h2>
                       </div>
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={selectAll}
-                        data-testid="button-select-all"
+                        className="text-blue-400 hover:text-white hover:bg-blue-900/30"
                       >
                         {selectedItems.length === readyItems.length ? "Deselect All" : "Select All"}
                       </Button>
@@ -167,31 +187,29 @@ export default function StoreDespatch() {
 
                     <div className="space-y-2 mb-4">
                       {readyItems.map((item) => (
-                        <div 
-                          key={item.id} 
-                          className={`p-3 rounded-lg border transition-colors cursor-pointer ${
-                            selectedItems.includes(item.id) 
-                              ? "bg-primary/5 border-primary" 
-                              : "bg-muted/30 border-transparent"
-                          }`}
+                        <div
+                          key={item.id}
+                          className={`p-3 rounded-lg border transition-colors cursor-pointer ${selectedItems.includes(item.id)
+                            ? "bg-blue-900/20 border-blue-600"
+                            : "bg-slate-900/50 border-slate-700 hover:border-slate-600"
+                            }`}
                           onClick={() => toggleItem(item.id)}
-                          data-testid={`despatch-item-${item.id}`}
                         >
                           <div className="flex items-center gap-3">
                             <Checkbox
                               checked={selectedItems.includes(item.id)}
                               onCheckedChange={() => toggleItem(item.id)}
-                              data-testid={`checkbox-item-${item.id}`}
+                              className="border-slate-500 data-[state=checked]:bg-blue-600 data-[state=checked]:border-blue-600"
                             />
                             <div className="flex-1 min-w-0">
-                              <p className="font-medium text-sm truncate">{item.itemName}</p>
-                              <p className="text-xs text-muted-foreground">
+                              <p className="font-medium text-sm text-white truncate">{item.itemName}</p>
+                              <p className="text-xs text-slate-400">
                                 {item.batchNumber || "No batch"} • {item.quantity} {item.unit}
                               </p>
                             </div>
                             <div className="text-right">
-                              <p className="font-bold">{item.quantity}</p>
-                              <span className="text-xs text-muted-foreground">{item.unit}</span>
+                              <p className="font-bold text-white">{item.quantity}</p>
+                              <span className="text-xs text-slate-500">{item.unit}</span>
                             </div>
                           </div>
                         </div>
@@ -199,39 +217,38 @@ export default function StoreDespatch() {
                     </div>
 
                     {selectedItems.length > 0 && (
-                      <div className="p-3 bg-blue-50 rounded-lg mb-4">
-                        <p className="text-sm text-blue-700">
-                          <span className="font-medium">{selectedItems.length}</span> item(s) selected for despatch
+                      <div className="p-3 bg-blue-900/20 border border-blue-700/50 rounded-lg mb-4">
+                        <p className="text-sm text-blue-200">
+                          <span className="font-bold text-white">{selectedItems.length}</span> item(s) selected for despatch
                         </p>
                       </div>
                     )}
 
                     <form onSubmit={handleSubmit} className="space-y-4">
                       <div className="space-y-2">
-                        <Label htmlFor="sentBy">Sent By *</Label>
+                        <Label htmlFor="sentBy" className="text-slate-300">Sent By *</Label>
                         <Input
                           id="sentBy"
                           placeholder="Your name"
                           value={sentBy}
                           onChange={(e) => setSentBy(e.target.value)}
-                          data-testid="input-sent-by"
+                          className="bg-slate-900 border-slate-600 text-white"
                         />
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="notes">Notes (Optional)</Label>
+                        <Label htmlFor="notes" className="text-slate-300">Notes (Optional)</Label>
                         <Input
                           id="notes"
                           placeholder="Any special instructions..."
                           value={notes}
                           onChange={(e) => setNotes(e.target.value)}
-                          data-testid="input-notes"
+                          className="bg-slate-900 border-slate-600 text-white"
                         />
                       </div>
                       <Button
                         type="submit"
-                        className="w-full"
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white"
                         disabled={createDespatch.isPending || selectedItems.length === 0}
-                        data-testid="button-create-despatch"
                       >
                         {createDespatch.isPending ? (
                           <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Sending...</>
@@ -246,34 +263,37 @@ export default function StoreDespatch() {
             )}
           </TabsContent>
 
-          <TabsContent value="history" className="space-y-3 mt-4">
+          <TabsContent value="history" className="space-y-3 mt-6">
             {despatchesLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-slate-500" />
               </div>
             ) : despatches.length === 0 ? (
-              <Card className="p-8 text-center">
-                <Truck className="h-12 w-12 mx-auto text-muted-foreground/50 mb-2" />
-                <p className="text-muted-foreground">No despatch history</p>
+              <Card className="bg-slate-800/30 border-slate-700">
+                <CardContent className="py-12 text-center">
+                  <Truck className="h-16 w-16 text-slate-600 mx-auto mb-4" />
+                  <h2 className="text-xl font-bold text-white mb-2">No Despatch History</h2>
+                  <p className="text-slate-400">Completed despatches will appear here.</p>
+                </CardContent>
               </Card>
             ) : (
               despatches.map((despatch) => (
-                <Card key={despatch.id} className="border-none shadow-sm" data-testid={`despatch-${despatch.id}`}>
+                <Card key={despatch.id} className="bg-slate-800/50 border-slate-700 hover:border-slate-600 transition-all">
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         {getStatusIcon(despatch.status)}
-                        <span className="font-medium text-sm">Despatch #{despatch.id.slice(-6)}</span>
+                        <span className="font-medium text-white text-sm">Despatch #{despatch.id.slice(-6)}</span>
                       </div>
                       {getStatusBadge(despatch.status)}
                     </div>
-                    <div className="text-xs text-muted-foreground space-y-1">
+                    <div className="text-xs text-slate-400 space-y-1">
                       <p>To: {despatch.destination}</p>
                       <p>Items: {despatch.totalItems}</p>
                       <p>Sent by: {despatch.sentBy}</p>
                       <p>Date: {format(new Date(despatch.despatchDate), "MMM d, yyyy HH:mm")}</p>
                       {despatch.receivedBy && (
-                        <p className="text-green-700">Received by: {despatch.receivedBy}</p>
+                        <p className="text-emerald-400">Received by: {despatch.receivedBy}</p>
                       )}
                     </div>
                   </CardContent>
@@ -282,9 +302,7 @@ export default function StoreDespatch() {
             )}
           </TabsContent>
         </Tabs>
-      </main>
-
-      <BottomNav role="store" />
-    </MobileShell>
+      </div>
+    </div>
   );
 }
