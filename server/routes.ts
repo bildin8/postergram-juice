@@ -63,6 +63,20 @@ export async function registerRoutes(
     log('M-Pesa client initialized from environment');
   }
 
+  // ============ AUTH ROUTES ============
+
+  // Verify PIN for app access
+  app.post("/api/auth/verify-pin", (req, res) => {
+    const { pin } = req.body;
+    const appPin = process.env.APP_PIN || "1234"; // Default PIN for dev
+
+    if (pin === appPin) {
+      res.json({ valid: true });
+    } else {
+      res.json({ valid: false });
+    }
+  });
+
   // ============ M-PESA STK PUSH ROUTES ============
 
   // Check M-Pesa configuration status

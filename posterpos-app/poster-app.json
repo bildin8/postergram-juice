@@ -1,0 +1,31 @@
+{
+    "name": "M-Pesa Payment",
+    "description": "Accept M-Pesa mobile payments directly from PosterPOS",
+    "version": "1.0.0",
+    "author": "PosterGram",
+    "icon": "icon.png",
+    "platforms": [
+        "pos"
+    ],
+    "permissions": [
+        "orders",
+        "interface"
+    ],
+    "entryPoints": {
+        "pos": {
+            "url": "index.html",
+            "placement": "payment",
+            "button": {
+                "label": "M-Pesa",
+                "icon": "mpesa-icon.svg"
+            }
+        }
+    },
+    "settings": {
+        "apiUrl": {
+            "type": "string",
+            "label": "Backend API URL",
+            "default": "https://postergram-juice-production.up.railway.app"
+        }
+    }
+}
