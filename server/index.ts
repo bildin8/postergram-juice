@@ -74,6 +74,11 @@ app.use((req, res, next) => {
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
+
+  // Serve PosterPOS widget static files
+  const path = await import('path');
+  app.use('/posterpos-widget', express.static(path.join(process.cwd(), 'posterpos-app', 'dist')));
+
   if (process.env.NODE_ENV === "production") {
     serveStatic(app);
   } else {
