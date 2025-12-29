@@ -34,7 +34,9 @@ export async function secureFetch(url: string, options: RequestInit = {}) {
     const res = await fetch(url, { ...options, headers });
 
     if (res.status === 401) {
-        // Redirect to login if unauthorized
+        // Clear session to prevent infinite reload loop
+        localStorage.removeItem("postergram_auth");
+        // Redirect to login
         window.location.reload();
     }
 
