@@ -102,7 +102,7 @@ export default function Profitability() {
                             onCheckedChange={setShowLowMarginOnly}
                         />
                         <label htmlFor="low-margin" className="text-slate-300 text-sm cursor-pointer select-none">
-                            Show Low Margin Only (< 40%)
+                            Show Low Margin Only (&lt; 40%)
                         </label>
                     </div>
                 </div>
@@ -144,8 +144,8 @@ export default function Profitability() {
 
                                             <div className="w-24 text-right">
                                                 <div className={`inline-flex items-center px-2 py-1 rounded-md ${product.marginPercent < 30 ? 'bg-red-900/30 text-red-400 border border-red-800' :
-                                                        product.marginPercent < 50 ? 'bg-amber-900/30 text-amber-400 border border-amber-800' :
-                                                            'bg-emerald-900/30 text-emerald-400 border border-emerald-800'
+                                                    product.marginPercent < 50 ? 'bg-amber-900/30 text-amber-400 border border-amber-800' :
+                                                        'bg-emerald-900/30 text-emerald-400 border border-emerald-800'
                                                     }`}>
                                                     <span className="font-bold">{product.marginPercent.toFixed(1)}%</span>
                                                 </div>
