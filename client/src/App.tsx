@@ -24,6 +24,8 @@ import Profitability from "@/pages/partner/Profitability";
 import CashHandover from "@/pages/shop/CashHandover";
 import Suppliers from "@/pages/partner/Suppliers";
 import SupplierAnalytics from "@/pages/partner/SupplierAnalytics";
+import SmartReplenishment from "@/pages/partner/SmartReplenishment";
+
 
 
 
@@ -97,6 +99,8 @@ function Router() {
       <Route path="/partner/insights" component={Insights} />
       <Route path="/partner/profitability" component={Profitability} />
       <Route path="/partner/staff" component={StaffManagement} />
+      <Route path="/partner/smart-replenishment" component={SmartReplenishment} />
+
 
       <Route path="/partner/suppliers" component={Suppliers} />
       <Route path="/partner/suppliers/:id/analytics" component={SupplierAnalytics} />

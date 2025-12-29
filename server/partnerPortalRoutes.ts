@@ -480,6 +480,118 @@ router.get('/profitability', async (req, res) => {
     }
 });
 
+// ============================================================================
+// SMART REPLENISHMENT (Forecast based on past sales)
+// ============================================================================
+
+router.get('/insights/smart-replenishment', async (req, res) => {
+    try {
+        if (!isPosterPOSInitialized()) {
+            return res.status(503).json({ message: "PosterPOS not configured" });
+        }
+        const client = getPosterPOSClient();
+
+        // 1. Timeframe (Last 30 Days)
+        const days = 30;
+        const coverageDays = 7; // Goal: Have 7 days of stock
+        const todaysDate = new Date();
+        const pastDate = new Date();
+        pastDate.setDate(todaysDate.getDate() - days);
+
+        const dateTo = todaysDate.toISOString().split('T')[0].replace(/-/g, '');
+        const dateFrom = pastDate.toISOString().split('T')[0].replace(/-/g, '');
+
+        // 2. Fetch Sales History (Transactions)
+        const transactions = await client.getTransactions({
+            dateFrom,
+            dateTo,
+            includeProducts: true,
+            status: 2 // Closed/Successful transactions only
+        });
+
+        // 3. Aggregate Product Sales
+        const productSales = new Map<string, number>(); // product_id -> total qty sold
+
+        for (const tx of transactions) {
+            if (tx.products) {
+                for (const p of tx.products) {
+                    const pid = p.product_id.toString();
+                    const qty = parseFloat(p.num || '0');
+                    productSales.set(pid, (productSales.get(pid) || 0) + qty);
+                }
+            }
+        }
+
+        // 4. Fetch Recipes (Product -> Ingredients)
+        const productsWithRecipes = await client.getAllProductsWithRecipes();
+
+        // 5. Calculate Ingredient Usage
+        const ingredientUsage = new Map<string, {
+            name: string;
+            unit: string;
+            used: number;
+        }>();
+
+        for (const p of productsWithRecipes) {
+            const soldQty = productSales.get(p.product_id.toString()) || 0;
+            if (soldQty > 0 && p.ingredients) {
+                for (const ing of p.ingredients) {
+                    const ingId = ing.ingredient_id.toString();
+                    const usage = soldQty * ing.structure_netto;
+
+                    const current = ingredientUsage.get(ingId) || {
+                        name: ing.ingredient_name,
+                        unit: ing.ingredient_unit,
+                        used: 0
+                    };
+
+                    current.used += usage;
+                    ingredientUsage.set(ingId, current);
+                }
+            }
+        }
+
+        // 6. Fetch Current Stock Levels
+        const stockLevels = await client.getStockLevels();
+        const stockMap = new Map(stockLevels.map(s => [s.product_id.toString(), s.stock_count]));
+
+        // 7. Generate Forecast Report
+        const report = [];
+
+        for (const [ingId, data] of ingredientUsage.entries()) {
+            const dailyAvg = data.used / days;
+            const requiredStock = dailyAvg * coverageDays;
+            const currentStock = stockMap.get(ingId) || 0;
+            const toOrder = Math.max(0, requiredStock - currentStock);
+
+            report.push({
+                ingredientId: ingId,
+                name: data.name,
+                unit: data.unit,
+                totalUsed30d: Math.round(data.used * 100) / 100,
+                dailyAvgUsage: Math.round(dailyAvg * 100) / 100,
+                currentStock: Math.round(currentStock * 100) / 100,
+                requiredForCoverage: Math.round(requiredStock * 100) / 100,
+                recommendedOrder: Math.round(toOrder * 100) / 100,
+                status: toOrder > 0 ? 'reorder' : 'ok'
+            });
+        }
+
+        // Sort by urgency (highest recommended order first)
+        report.sort((a, b) => b.recommendedOrder - a.recommendedOrder);
+
+        res.json({
+            period: { from: dateFrom, to: dateTo, days },
+            coverageTargetDays: coverageDays,
+            items: report
+        });
+
+    } catch (error: any) {
+        log(`Error generating smart replenishment: ${error.message}`);
+        res.status(500).json({ message: 'Failed to generate forecast' });
+    }
+});
+
 
 // ============================================================================
 // SUPPLIER MANAGEMENT & ANALYTICS

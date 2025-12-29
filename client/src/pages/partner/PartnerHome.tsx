@@ -149,6 +149,13 @@ export default function PartnerHome() {
             href: "/partner/profitability",
             color: "bg-indigo-600",
         },
+        {
+            title: "Smart Replenishment",
+            description: "AI reorder suggestions from sales",
+            icon: TrendingUp,
+            href: "/partner/smart-replenishment",
+            color: "bg-violet-600",
+        },
 
         {
             title: "Items Management",
