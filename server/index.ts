@@ -4,6 +4,8 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 
+import cors from "cors";
+
 const app = express();
 const httpServer = createServer(app);
 
@@ -12,6 +14,8 @@ declare module "http" {
     rawBody: unknown;
   }
 }
+
+app.use(cors()); // Enable CORS for all routes (required for Poster POS widget)
 
 app.use(
   express.json({
