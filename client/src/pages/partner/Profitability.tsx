@@ -102,6 +102,7 @@ export default function Profitability() {
                             onCheckedChange={setShowLowMarginOnly}
                         />
                         <label htmlFor="low-margin" className="text-slate-300 text-sm cursor-pointer select-none">
+                            {/* Escape necessary for JSX */}
                             Show Low Margin Only (&lt; 40%)
                         </label>
                     </div>
