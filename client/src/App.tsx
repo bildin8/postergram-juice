@@ -22,6 +22,9 @@ import LocalBuys from "@/pages/partner/LocalBuys";
 import MpesaPayment from "@/pages/owner/MpesaPayment";
 import Profitability from "@/pages/partner/Profitability";
 import CashHandover from "@/pages/shop/CashHandover";
+import Suppliers from "@/pages/partner/Suppliers";
+import SupplierAnalytics from "@/pages/partner/SupplierAnalytics";
+
 
 
 // Store Portal
@@ -64,7 +67,7 @@ function Router() {
       <Route path="/store/to-buy" component={ToBuy} />
       <Route path="/store/process" component={StoreProcess} />
       <Route path="/store/despatch" component={StoreDespatch} />
-      <Route path="/store/despatch" component={StoreDespatch} />
+
       <Route path="/store/stock" component={StoreStock} />
       <Route path="/store/processing" component={ProcessingRecipes} />
 
@@ -83,20 +86,22 @@ function Router() {
       <Route path="/shop/receive" component={ReceiveDispatch} />
       <Route path="/shop/local-buys" component={LocalBuyTasks} />
 
-      <Route path="/shop/local-buys" component={LocalBuyTasks} />
+
       <Route path="/shop/cash-handover" component={CashHandover} />
 
       {/* Partner Portal Routes */}
 
       <Route path="/partner" component={PartnerHome} />
       <Route path="/partner/approvals" component={ApprovalsInbox} />
-      <Route path="/partner/approvals" component={ApprovalsInbox} />
+
       <Route path="/partner/insights" component={Insights} />
       <Route path="/partner/profitability" component={Profitability} />
       <Route path="/partner/staff" component={StaffManagement} />
 
-      <Route path="/partner/staff" component={StaffManagement} />
+      <Route path="/partner/suppliers" component={Suppliers} />
+      <Route path="/partner/suppliers/:id/analytics" component={SupplierAnalytics} />
       <Route path="/partner/stock-recon" component={StockReconciliation} />
+
       <Route path="/partner/stock-takes" component={StockTakes} />
       <Route path="/partner/cash-recon" component={CashReconciliation} />
       <Route path="/partner/alerts" component={Alerts} />

@@ -480,7 +480,104 @@ router.get('/profitability', async (req, res) => {
     }
 });
 
+
+// ============================================================================
+// SUPPLIER MANAGEMENT & ANALYTICS
+// ============================================================================
+
+// Get all suppliers
+router.get('/suppliers', async (req, res) => {
+    try {
+        const { data, error } = await supabaseAdmin
+            .from('suppliers')
+            .select('*')
+            .order('name');
+
+        if (error) throw error;
+        res.json(data || []);
+    } catch (error: any) {
+        log(`Error fetching suppliers: ${error.message}`);
+        res.status(500).json({ message: 'Failed to fetch suppliers' });
+    }
+});
+
+// Create supplier
+router.post('/suppliers', async (req, res) => {
+    try {
+        const schema = z.object({
+            name: z.string().min(1),
+            contactPerson: z.string().optional(),
+            phone: z.string().optional(),
+            email: z.string().email().optional().or(z.literal('')),
+        });
+
+        const data = schema.parse(req.body);
+
+        const { data: supplier, error } = await supabaseAdmin
+            .from('suppliers')
+            .insert({
+                name: data.name,
+                contact_person: data.contactPerson,
+                phone: data.phone,
+                email: data.email || null,
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.status(201).json(supplier);
+    } catch (error: any) {
+        log(`Error creating supplier: ${error.message}`);
+        res.status(500).json({ message: 'Failed to create supplier' });
+    }
+});
+
+// Get Supplier Analytics (Price trends for items linked to supplier)
+router.get('/suppliers/:id/analytics', async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // 1. Get items linked to this supplier
+        const { data: items } = await supabaseAdmin
+            .from('store_items')
+            .select('id, name')
+            .eq('supplier_id', id);
+
+        if (!items || items.length === 0) {
+            return res.json({ priceHistory: [] });
+        }
+
+        const itemIds = items.map(i => i.id);
+
+        // 2. Get purchase history for these items
+        // We need to join store_purchase_items with store_purchases(status=received)
+        // But Supabase JS client doesn't do deep filtering easily in one go for m:n relations 
+        // without RPC or complex query.
+        // We'll fetch purchase items where item_id is in our list, ordered by created_at.
+
+        const { data: history, error } = await supabaseAdmin
+            .from('store_purchase_items')
+            .select(`
+                actual_cost,
+                quantity,
+                created_at,
+                item:store_items(name)
+            `)
+            .in('item_id', itemIds)
+            .order('created_at', { ascending: true })
+            .limit(100); // Last 100 purchases
+
+        if (error) throw error;
+
+        res.json({ priceHistory: history });
+    } catch (error: any) {
+        log(`Error fetching supplier analytics: ${error.message}`);
+        res.status(500).json({ message: 'Failed to fetch analytics' });
+    }
+});
+
 router.get('/audit-stream', async (req, res) => {
+
     try {
         const events = [];
 

@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
@@ -46,8 +48,10 @@ export default function ApprovalsInbox() {
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [rejectReason, setRejectReason] = useState("");
     const [rejectingId, setRejectingId] = useState<string | null>(null);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
     const { data: approvals, isLoading } = useQuery<Approval[]>({
+
         queryKey: ["/api/partner/approvals"],
         queryFn: async () => {
             const res = await fetch("/api/partner/approvals");
@@ -113,6 +117,46 @@ export default function ApprovalsInbox() {
         rejectMutation.mutate({ type, id, reason: rejectReason });
     };
 
+    const toggleSelection = (id: string) => {
+        const newSet = new Set(selectedIds);
+        if (newSet.has(id)) {
+            newSet.delete(id);
+        } else {
+            newSet.add(id);
+        }
+        setSelectedIds(newSet);
+    };
+
+    const toggleAll = () => {
+        if (selectedIds.size === (approvals?.length || 0)) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(approvals?.map(a => a.id) || []));
+        }
+    };
+
+    const handleBulkApprove = async () => {
+        if (selectedIds.size === 0) return;
+
+        // Optimistic UI update or promise.all
+        // For simplicity, we'll iterate. Ideally backend should have a bulk endpoint.
+        let successCount = 0;
+        const selected = approvals?.filter(a => selectedIds.has(a.id)) || [];
+
+        for (const item of selected) {
+            try {
+                await approveMutation.mutateAsync({ type: item.type, id: item.id });
+                successCount++;
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        toast({ title: "Bulk Action Complete", description: `Approved ${successCount} requests.` });
+        setSelectedIds(new Set());
+    };
+
+
     const toggleExpand = (id: string) => {
         setExpandedId((prev) => (prev === id ? null : id));
     };
@@ -150,10 +194,18 @@ export default function ApprovalsInbox() {
                         </Button>
                     </Link>
                     <h1 className="text-2xl font-bold text-white mb-2">Approvals Inbox</h1>
-                    <p className="text-slate-400">
-                        {approvals?.length || 0} requests pending your review
-                    </p>
+                    <div className="flex justify-between items-center">
+                        <p className="text-slate-400">
+                            {approvals?.length || 0} requests pending your review
+                        </p>
+                        {approvals && approvals.length > 0 && (
+                            <Button variant="outline" size="sm" onClick={toggleAll} className="border-slate-600 text-slate-300">
+                                {selectedIds.size === approvals.length ? "Deselect All" : "Select All"}
+                            </Button>
+                        )}
+                    </div>
                 </div>
+
 
                 {/* Loading */}
                 {isLoading && (
@@ -188,17 +240,25 @@ export default function ApprovalsInbox() {
                                 <CardHeader className="pb-2">
                                     <div className="flex items-center justify-between">
                                         <div className="flex items-center gap-3">
-                                            <div className={`p-2 rounded-lg ${approval.type === "purchase_request" ? "bg-blue-600" : "bg-purple-600"
-                                                }`}>
-                                                <Icon className="h-5 w-5 text-white" />
-                                            </div>
-                                            <div>
-                                                <CardTitle className="text-white text-lg">
-                                                    {getTypeLabel(approval.type)}
-                                                </CardTitle>
-                                                <p className="text-sm text-slate-400">
-                                                    by {approval.requestedBy} • {new Date(approval.requestedAt).toLocaleDateString()}
-                                                </p>
+                                            <Checkbox
+                                                checked={selectedIds.has(approval.id)}
+                                                onCheckedChange={() => toggleSelection(approval.id)}
+                                                className="border-slate-500 data-[state=checked]:bg-emerald-500 data-[state=checked]:border-emerald-500"
+                                            />
+                                            <div className="flex items-center gap-3">
+                                                <div className={`p-2 rounded-lg ${approval.type === "purchase_request" ? "bg-blue-600" : "bg-purple-600"
+
+                                                    }`}>
+                                                    <Icon className="h-5 w-5 text-white" />
+                                                </div>
+                                                <div>
+                                                    <CardTitle className="text-white text-lg">
+                                                        {getTypeLabel(approval.type)}
+                                                    </CardTitle>
+                                                    <p className="text-sm text-slate-400">
+                                                        by {approval.requestedBy} • {new Date(approval.requestedAt).toLocaleDateString()}
+                                                    </p>
+                                                </div>
                                             </div>
                                         </div>
                                         <div className="flex items-center gap-2">
@@ -324,7 +384,33 @@ export default function ApprovalsInbox() {
                         );
                     })}
                 </div>
+
+                {/* Bulk Action Floating Bar */}
+                {selectedIds.size > 0 && (
+                    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-800 border border-slate-700 shadow-2xl rounded-full px-6 py-3 flex items-center gap-4 animate-in slide-in-from-bottom-4">
+                        <span className="text-white font-bold">{selectedIds.size} selected</span>
+                        <div className="h-4 w-px bg-slate-600"></div>
+                        <Button
+                            size="sm"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-full px-6"
+                            onClick={handleBulkApprove}
+                            disabled={approveMutation.isPending}
+                        >
+                            {approveMutation.isPending ? "Approving..." : "Approve Selected"}
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-slate-400 hover:text-white rounded-full hover:bg-slate-700"
+                            onClick={() => setSelectedIds(new Set())}
+                        >
+                            Cancel
+                        </Button>
+                    </div>
+                )}
+
             </div>
         </div>
+
     );
 }

@@ -14,8 +14,12 @@ import {
     AlertTriangle,
     Package,
     Boxes,
-    ClipboardList
+    ClipboardList,
+    PieChart,
+    Truck
 } from "lucide-react";
+
+
 
 interface ApprovalSummary {
     purchaseRequests: number;
@@ -139,12 +143,28 @@ export default function PartnerHome() {
             color: "bg-cyan-600",
         },
         {
+            title: "Profitability Engine",
+            description: "Analyze margins & recipe costs",
+            icon: PieChart,
+            href: "/partner/profitability",
+            color: "bg-indigo-600",
+        },
+
+        {
             title: "Items Management",
             description: "Manage shop & store items",
             icon: Boxes,
             href: "/partner/items",
             color: "bg-pink-600",
         },
+        {
+            title: "Suppliers",
+            description: "Database & price analytics",
+            icon: Truck,
+            href: "/partner/suppliers",
+            color: "bg-blue-800",
+        },
+
         {
             title: "Stock Takes",
             description: "View stock sessions & configure",
