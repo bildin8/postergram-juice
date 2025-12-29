@@ -20,6 +20,7 @@ import storePortalRoutes from "./storePortalRoutes";
 import shopPortalRoutes from "./shopPortalRoutes";
 import partnerPortalRoutes from "./partnerPortalRoutes";
 import insightsRoutes from "./insightsRoutes";
+import { requirePartnerAuth } from "./authMiddleware";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -71,11 +72,18 @@ export async function registerRoutes(
     const appPin = process.env.APP_PIN || "1234"; // Default PIN for dev
 
     if (pin === appPin) {
+      // Return success but also expect client to use this PIN in headers
       res.json({ valid: true });
     } else {
       res.json({ valid: false });
     }
   });
+
+  // Protect Partner Routes
+  app.use("/api/partner", requirePartnerAuth, partnerPortalRoutes);
+  app.use("/api/store", storePortalRoutes);
+  app.use("/api/shop", shopPortalRoutes);
+  app.use("/api/insights", insightsRoutes);
 
   // ============ M-PESA STK PUSH ROUTES ============
 

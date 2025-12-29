@@ -1,0 +1,14 @@
+{
+    "version": "1.0.0",
+    "name": "M-Pesa Payment",
+    "developer": "PosterGram",
+    "description": "Accept M-Pesa mobile payments via STK Push",
+    "url": "index.html",
+    "icon": "icon.png",
+    "integration_type": "pos",
+    "pos_placement": "payment_screen",
+    "permissions": [
+        "orders:read",
+        "orders:write"
+    ]
+}

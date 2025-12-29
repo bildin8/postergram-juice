@@ -47,6 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const session = {
                 authenticated: true,
                 expiry: new Date().getTime() + SESSION_DURATION,
+                pin: pin
             };
             localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
             setIsAuthenticated(true);

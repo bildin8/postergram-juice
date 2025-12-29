@@ -272,14 +272,65 @@ router.get('/reconciliation/stock', async (req, res) => {
             ...Array.from(closingMap.keys()),
         ]);
 
+        // 3. Fetch SALES data from PosterPOS (transaction sync runs every 10 mins, but let's get live or recent)
+        // We'll fetch transactions between opening and closing times
+        // If closing is open/null, use 'now'
+
+        let salesMap = new Map<string, number>();
+
+        if (recon && isPosterPOSInitialized()) {
+            const client = getPosterPOSClient();
+
+            // Get session times
+            const { data: openingSession } = await supabaseAdmin.from('shop_stock_sessions').select('started_at').eq('id', recon.opening_session_id).single();
+            const { data: closingSession } = await supabaseAdmin.from('shop_stock_sessions').select('completed_at').eq('id', recon.closing_session_id).single();
+
+            if (openingSession) {
+                const fromDate = new Date(openingSession.started_at).toISOString().split('T')[0].replace(/-/g, '');
+                const toDate = closingSession?.completed_at
+                    ? new Date(closingSession.completed_at).toISOString().split('T')[0].replace(/-/g, '')
+                    : new Date().toISOString().split('T')[0].replace(/-/g, '');
+
+                // Fetch transactions
+                try {
+                    const transactions = await client.getTransactions({
+                        dateFrom: fromDate,
+                        dateTo: toDate
+                    });
+
+                    // Aggregate sales by product
+                    for (const tx of transactions) {
+                        if (tx.products) {
+                            for (const product of tx.products) {
+                                // Match by name (imperfect but works for "Management Engine" v1)
+                                // Better: Match by product_id if stored in inventory_items
+                                const productName = product.product_name;
+                                const qty = parseFloat(product.num || '0');
+
+                                const current = salesMap.get(productName) || 0;
+                                salesMap.set(productName, current + qty);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    log(`Error fetching POS sales for recon: ${e}`);
+                }
+            }
+        }
+
         const variances = Array.from(allItems).map(itemName => {
             const openingData = openingMap.get(itemName) || { qty: 0, id: null };
             const closingData = closingMap.get(itemName) || { qty: 0, id: null };
             const opening = openingData.qty;
             const closing = closingData.qty;
 
-            // Simple variance calculation (in production, you'd factor in sales, dispatches, wastage)
-            const expected = opening; // Simplified - would normally factor in movements
+            // Get sold qty from PosterPOS Map
+            const sold = salesMap.get(itemName) || 0;
+
+            // Simple variance calculation 
+            // Expected = Opening - Sold (assuming no restocks for this shift, needs enhancement for "Received")
+            // Ideally: Expected = Opening + Received - Sold
+            const expected = opening - sold;
             const actual = closing;
             const variance = actual - expected;
             const variancePercent = expected > 0 ? Math.round((variance / expected) * 100) : 0;
@@ -289,9 +340,9 @@ router.get('/reconciliation/stock', async (req, res) => {
                 itemName,
                 opening,
                 closing,
-                sold: 0, // Would come from POS data
-                dispatched: 0, // Would come from dispatch records
-                wastage: 0, // Would come from wastage entries
+                sold,
+                dispatched: 0, // Placeholder
+                wastage: 0, // Placeholder
                 expected,
                 actual,
                 variance,
@@ -317,6 +368,181 @@ router.get('/reconciliation/stock', async (req, res) => {
     } catch (error: any) {
         log(`Error fetching stock reconciliation: ${error.message}`);
         res.status(500).json({ message: 'Failed to fetch stock reconciliation' });
+    }
+});
+
+// ============================================================================
+// AUDIT STREAM
+// ============================================================================
+
+// ============================================================================
+// PROFITABILITY & COSTS
+// ============================================================================
+
+router.get('/profitability', async (req, res) => {
+    try {
+        if (!isPosterPOSInitialized()) {
+            return res.status(503).json({ message: "PosterPOS not configured" });
+        }
+        const client = getPosterPOSClient();
+
+        // 1. Get Products with detailed Recipes (Ingredients)
+        const productsWithRecipes = await client.getAllProductsWithRecipes();
+
+        // 2. Get Products to get Selling Price
+        const allProducts = await client.getProducts();
+
+        // 3. Get Ingredient Costs (Use 30-day movement report for weighted avg cost)
+        const movements = await client.getIngredientMovementsForRange(30);
+
+        // Build Cost Map: Ingredient ID -> Cost Per Unit
+        const costMap = new Map<string, number>();
+        for (const m of movements) {
+            // cost_end is usually cost per unit in cents (or base currency * 100)
+            // We use cost_end (current value) or cost_start if end is 0
+            const cost = (Number(m.cost_end) || Number(m.cost_start)) / 100;
+            if (cost > 0) {
+                costMap.set(m.ingredient_id, cost);
+            }
+        }
+
+        // Also get raw ingredients to name them if needed
+        const ingredientsRaw = await client.getIngredients();
+        const ingredientNameMap = new Map(ingredientsRaw.map((i: any) => [i.ingredient_id, i.ingredient_name]));
+
+        const profitability = [];
+
+        for (const p of productsWithRecipes) {
+            // Find matching product for price
+            // PosterPOS uses numeric IDs, but getProducts might return string/number mix. Stringify for safety.
+            const productInfo = allProducts.find((x: any) => x.product_id.toString() === p.product_id.toString());
+
+            // Get Price (Standard price)
+            // Product price might be an object { "1": "50000" } for different spots/stations. 
+            // We'll take the first one or 'price' property if simple.
+            let price = 0;
+            if (productInfo) {
+                if (typeof productInfo.price === 'object') {
+                    const firstPrice = Object.values(productInfo.price)[0];
+                    price = parseFloat(firstPrice as string) / 100; // Assuming cents
+                } else if (productInfo.price) {
+                    price = parseFloat(productInfo.price as any) / 100;
+                }
+            }
+
+            if (price === 0) continue; // Skip items with no price (modifiers, ingredients)
+
+            let totalCost = 0;
+            let recipeDetails = [];
+
+            // Calculate Ingredient Costs
+            if (p.ingredients) {
+                for (const ing of p.ingredients) {
+                    const costPerUnit = costMap.get(ing.ingredient_id.toString()) || 0;
+                    const qty = ing.structure_netto; // Usage quantity
+                    const lineCost = qty * costPerUnit;
+
+                    totalCost += lineCost;
+
+                    recipeDetails.push({
+                        name: ing.ingredient_name,
+                        qty,
+                        unit: ing.ingredient_unit,
+                        costPerUnit,
+                        lineCost
+                    });
+                }
+            }
+
+            const margin = price - totalCost;
+            const marginPercent = price > 0 ? (margin / price) * 100 : 0;
+
+            profitability.push({
+                id: p.product_id,
+                name: p.product_name,
+                category: productInfo?.menu_category_name || 'Uncategorized',
+                price,
+                cost: totalCost,
+                margin,
+                marginPercent,
+                recipe: recipeDetails
+            });
+        }
+
+        // Sort by Margin % (Lowest first - to highlight issues)
+        profitability.sort((a, b) => a.marginPercent - b.marginPercent);
+
+        res.json(profitability);
+
+    } catch (error: any) {
+        log(`Error calculating profitability: ${error.message}`);
+        res.status(500).json({ message: 'Failed to calculate profitability' });
+    }
+});
+
+router.get('/audit-stream', async (req, res) => {
+    try {
+        const events = [];
+
+        // 1. Approvals
+        const { data: approvals } = await supabaseAdmin
+            .from('purchase_requests')
+            .select('id, requested_by, approved_by, approved_at, status')
+            .eq('status', 'approved')
+            .order('approved_at', { ascending: false })
+            .limit(10);
+
+        if (approvals) {
+            events.push(...approvals.map(a => ({
+                id: a.id,
+                type: 'approval',
+                message: `${a.approved_by} approved purchase request`,
+                timestamp: a.approved_at,
+                user: a.approved_by
+            })));
+        }
+
+        // 2. Expenses
+        const { data: expenses } = await supabaseAdmin
+            .from('shop_expenses')
+            .select('id, description, amount, paid_by, created_at')
+            .order('created_at', { ascending: false })
+            .limit(10);
+
+        if (expenses) {
+            events.push(...expenses.map(e => ({
+                id: e.id,
+                type: 'expense',
+                message: `${e.paid_by} spent KES ${e.amount} on ${e.description}`,
+                timestamp: e.created_at,
+                user: e.paid_by
+            })));
+        }
+
+        // 3. Shifts
+        const { data: shifts } = await supabaseAdmin
+            .from('shifts')
+            .select('id, opened_by, opened_at, status')
+            .order('opened_at', { ascending: false })
+            .limit(5);
+
+        if (shifts) {
+            events.push(...shifts.map(s => ({
+                id: s.id,
+                type: 'shift',
+                message: `${s.opened_by} opened register`,
+                timestamp: s.opened_at,
+                user: s.opened_by
+            })));
+        }
+
+        // Sort by timestamp
+        events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+        res.json(events.slice(0, 20));
+    } catch (error: any) {
+        log(`Error fetching audit stream: ${error.message}`);
+        res.status(500).json({ message: 'Failed to fetch audit stream' });
     }
 });
 
@@ -886,6 +1112,152 @@ router.post('/items/sync-from-pos', async (req, res) => {
     } catch (error: any) {
         log(`Error syncing item from POS: ${error.message}`);
         res.status(500).json({ message: 'Failed to sync item' });
+    }
+});
+
+// Bulk import items from PosterPOS
+router.post('/items/bulk-sync', async (req, res) => {
+    try {
+        const schema = z.object({
+            items: z.array(z.object({
+                posterPosId: z.number(),
+                name: z.string(),
+                unit: z.string(),
+                currentStock: z.number().default(0),
+            })),
+        });
+
+        const { items } = schema.parse(req.body);
+
+        const insertData = items.map(item => ({
+            name: item.name,
+            unit: item.unit,
+            current_stock: item.currentStock,
+            category: 'posterpos',
+            bought_by: 'store',
+        }));
+
+        const { data, error } = await supabaseAdmin
+            .from('store_items')
+            .insert(insertData)
+            .select();
+
+        if (error) throw error;
+        res.status(201).json(data);
+    } catch (error: any) {
+        log(`Error bulk syncing items from POS: ${error.message}`);
+        res.status(500).json({ message: 'Failed to bulk sync items' });
+    }
+});
+
+// ============================================================================
+// SUPPLIERS
+// ============================================================================
+
+router.get('/suppliers', async (req, res) => {
+    try {
+        const { data, error } = await supabaseAdmin
+            .from('suppliers')
+            .select('*')
+            .eq('is_active', true)
+            .order('name');
+        if (error) throw error;
+        res.json(data || []);
+    } catch (error: any) {
+        log(`Error fetching suppliers: ${error.message}`);
+        res.status(500).json({ message: 'Failed to fetch suppliers' });
+    }
+});
+
+router.post('/suppliers', async (req, res) => {
+    try {
+        const schema = z.object({
+            name: z.string(),
+            contact_person: z.string().optional(),
+            phone: z.string().optional(),
+            email: z.string().optional(),
+        });
+        const data = schema.parse(req.body);
+        const { data: supplier, error } = await supabaseAdmin
+            .from('suppliers')
+            .insert(data)
+            .select()
+            .single();
+        if (error) throw error;
+        res.status(201).json(supplier);
+    } catch (error: any) {
+        log(`Error creating supplier: ${error.message}`);
+        res.status(500).json({ message: 'Failed to create supplier' });
+    }
+});
+
+// ============================================================================
+// REORDER TEMPLATES
+// ============================================================================
+
+router.get('/reorder-templates', async (req, res) => {
+    try {
+        const { data, error } = await supabaseAdmin
+            .from('reorder_templates')
+            .select(`
+                *,
+                items:reorder_template_items(*)
+            `)
+            .order('name');
+        if (error) throw error;
+        res.json(data || []);
+    } catch (error: any) {
+        log(`Error fetching templates: ${error.message}`);
+        res.status(500).json({ message: 'Failed to fetch templates' });
+    }
+});
+
+router.post('/reorder-templates', async (req, res) => {
+    try {
+        const schema = z.object({
+            name: z.string(),
+            description: z.string().optional(),
+            items: z.array(z.object({
+                storeItemId: z.string().uuid().optional(),
+                itemName: z.string(),
+                quantity: z.number(),
+                unit: z.string().default('units'),
+            })),
+            createdBy: z.string().optional(),
+        });
+
+        const data = schema.parse(req.body);
+
+        const { data: template, error: tError } = await supabaseAdmin
+            .from('reorder_templates')
+            .insert({
+                name: data.name,
+                description: data.description,
+                created_by: data.createdBy,
+            })
+            .select()
+            .single();
+
+        if (tError) throw tError;
+
+        const itemInserts = data.items.map(i => ({
+            template_id: template.id,
+            store_item_id: i.storeItemId,
+            item_name: i.itemName,
+            quantity: i.quantity,
+            unit: i.unit,
+        }));
+
+        const { error: iError } = await supabaseAdmin
+            .from('reorder_template_items')
+            .insert(itemInserts);
+
+        if (iError) throw iError;
+
+        res.status(201).json(template);
+    } catch (error: any) {
+        log(`Error creating template: ${error.message}`);
+        res.status(500).json({ message: 'Failed to create template' });
     }
 });
 

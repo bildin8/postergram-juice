@@ -11,6 +11,7 @@ export interface PosterPOSProduct {
 
 export interface PosterPOSTransactionProduct {
   product_id: number;
+  product_name?: string;
   modification_id?: number;
   product_price: number;
   num: string;
@@ -78,11 +79,11 @@ export class PosterPOSClient {
         queryParams.append(key, value);
       });
     }
-    
+
     const url = `${this.baseUrl}/api/${method}?${queryParams.toString()}`;
-    
+
     log(`PosterPOS request: ${method}`, 'posterpos');
-    
+
     try {
       const response = await fetch(url, {
         method: 'GET',
@@ -98,7 +99,7 @@ export class PosterPOSClient {
       }
 
       const data = await response.json();
-      
+
       if (data.error) {
         throw new Error(`PosterPOS API error: ${data.error}`);
       }
@@ -129,7 +130,7 @@ export class PosterPOSClient {
     // Get ingredients with their stock levels
     try {
       const ingredients = await this.request('menu.getIngredients');
-      
+
       if (!ingredients.response) {
         // Fallback: try to get products instead
         const products = await this.getProducts();
@@ -173,13 +174,13 @@ export class PosterPOSClient {
         include_modifications: '1',
         status: '2',
       };
-      
+
       if (options?.dateFrom) params.dateFrom = options.dateFrom;
       if (options?.dateTo) params.dateTo = options.dateTo;
       if (options?.afterDateClose) params.after_date_close = options.afterDateClose.toString();
       if (options?.status !== undefined) params.status = options.status.toString();
       if (options?.includeProducts !== undefined) params.include_products = options.includeProducts ? 'true' : 'false';
-      
+
       const response = await this.request('dash.getTransactions', params);
       return response.response || [];
     } catch (error) {
@@ -197,10 +198,10 @@ export class PosterPOSClient {
     const to = new Date();
     const from = new Date();
     from.setDate(from.getDate() - days);
-    
+
     const dateFrom = from.toISOString().split('T')[0].replace(/-/g, '');
     const dateTo = to.toISOString().split('T')[0].replace(/-/g, '');
-    
+
     return this.getTransactions({ dateFrom, dateTo });
   }
 
@@ -219,7 +220,7 @@ export class PosterPOSClient {
       if (dateFrom) params.date_from = dateFrom;
       if (dateTo) params.date_to = dateTo;
       if (type) params.type = type.toString();
-      
+
       const response = await this.request('storage.getReportMovement', params);
       return response.response || [];
     } catch (error) {
@@ -237,10 +238,10 @@ export class PosterPOSClient {
     const to = new Date();
     const from = new Date();
     from.setDate(from.getDate() - days);
-    
+
     const dateFrom = from.toISOString().split('T')[0].replace(/-/g, '');
     const dateTo = to.toISOString().split('T')[0].replace(/-/g, '');
-    
+
     return this.getIngredientMovements(dateFrom, dateTo);
   }
 
@@ -258,9 +259,9 @@ export class PosterPOSClient {
     try {
       const response = await this.request('menu.getProduct', { product_id: productId });
       if (!response.response) return null;
-      
+
       const product = response.response;
-      
+
       const result: ProductWithRecipe = {
         product_id: product.product_id,
         product_name: product.product_name,
@@ -275,7 +276,7 @@ export class PosterPOSClient {
           ingredient_unit: ing.ingredient_unit,
         })) || [],
       };
-      
+
       // Parse group modifications (ingredient choices)
       if (product.group_modifications && Array.isArray(product.group_modifications)) {
         result.group_modifications = product.group_modifications.map((group: any) => ({
@@ -294,7 +295,7 @@ export class PosterPOSClient {
           })),
         }));
       }
-      
+
       return result;
     } catch (error) {
       log(`Failed to get product recipe for ${productId}: ${error}`, 'posterpos');
@@ -306,14 +307,14 @@ export class PosterPOSClient {
     try {
       const products = await this.getProducts();
       const recipesMap: ProductWithRecipe[] = [];
-      
+
       for (const product of products) {
         const productWithRecipe = await this.getProductWithRecipe(product.product_id.toString());
         if (productWithRecipe && productWithRecipe.ingredients && productWithRecipe.ingredients.length > 0) {
           recipesMap.push(productWithRecipe);
         }
       }
-      
+
       log(`Fetched recipes for ${recipesMap.length} products with ingredients`, 'posterpos');
       return recipesMap;
     } catch (error) {

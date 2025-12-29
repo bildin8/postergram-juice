@@ -20,6 +20,9 @@ import Alerts from "@/pages/partner/Alerts";
 import Items from "@/pages/partner/Items";
 import LocalBuys from "@/pages/partner/LocalBuys";
 import MpesaPayment from "@/pages/owner/MpesaPayment";
+import Profitability from "@/pages/partner/Profitability";
+import CashHandover from "@/pages/shop/CashHandover";
+
 
 // Store Portal
 import StoreHome from "@/pages/store/StoreHome";
@@ -27,6 +30,8 @@ import ToBuy from "@/pages/store/ToBuy";
 import StoreProcess from "@/pages/store/Process";
 import StoreDespatch from "@/pages/store/Despatch";
 import StoreStock from "@/pages/store/StoreStock";
+import ProcessingRecipes from "@/pages/store/ProcessingRecipes";
+
 
 // Shop Portal
 import ShopHome from "@/pages/shop/ShopHome";
@@ -59,7 +64,10 @@ function Router() {
       <Route path="/store/to-buy" component={ToBuy} />
       <Route path="/store/process" component={StoreProcess} />
       <Route path="/store/despatch" component={StoreDespatch} />
+      <Route path="/store/despatch" component={StoreDespatch} />
       <Route path="/store/stock" component={StoreStock} />
+      <Route path="/store/processing" component={ProcessingRecipes} />
+
 
       {/* Legacy redirects - old routes now go to new structure */}
       <Route path="/store/purchases">{() => { window.location.href = "/store/to-buy"; return null; }}</Route>
@@ -75,10 +83,18 @@ function Router() {
       <Route path="/shop/receive" component={ReceiveDispatch} />
       <Route path="/shop/local-buys" component={LocalBuyTasks} />
 
+      <Route path="/shop/local-buys" component={LocalBuyTasks} />
+      <Route path="/shop/cash-handover" component={CashHandover} />
+
       {/* Partner Portal Routes */}
+
       <Route path="/partner" component={PartnerHome} />
       <Route path="/partner/approvals" component={ApprovalsInbox} />
+      <Route path="/partner/approvals" component={ApprovalsInbox} />
       <Route path="/partner/insights" component={Insights} />
+      <Route path="/partner/profitability" component={Profitability} />
+      <Route path="/partner/staff" component={StaffManagement} />
+
       <Route path="/partner/staff" component={StaffManagement} />
       <Route path="/partner/stock-recon" component={StockReconciliation} />
       <Route path="/partner/stock-takes" component={StockTakes} />

@@ -31,7 +31,8 @@ import {
     RefreshCw,
     Store,
     ShoppingBag,
-    CloudUpload
+    CloudUpload,
+    Check
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -64,14 +65,35 @@ export default function Items() {
     const [showAddDialog, setShowAddDialog] = useState(false);
 
     // New item form
-    const [newItem, setNewItem] = useState({
+    const [newItem, setNewItem] = useState<{
+        name: string;
+        category: string;
+        unit: string;
+        min_stock: number;
+        current_stock: number;
+        cost_per_unit: number;
+        bought_by: "store" | "shop";
+        supplier_id?: string;
+        barcode: string;
+    }>({
         name: "",
         category: "general",
         unit: "pcs",
         min_stock: 0,
         current_stock: 0,
         cost_per_unit: 0,
-        bought_by: "store" as "store" | "shop",
+        bought_by: "store",
+        supplier_id: undefined,
+        barcode: "",
+    });
+
+    // Fetch suppliers
+    const { data: suppliers = [] } = useQuery({
+        queryKey: ["/api/partner/suppliers"],
+        queryFn: async () => {
+            const res = await fetch("/api/partner/suppliers");
+            return res.json();
+        },
     });
 
     // Fetch store items
@@ -109,7 +131,7 @@ export default function Items() {
             toast({ title: "Item Created", description: "New item added successfully" });
             queryClient.invalidateQueries({ queryKey: ["/api/partner/items"] });
             setShowAddDialog(false);
-            setNewItem({ name: "", category: "general", unit: "pcs", min_stock: 0, current_stock: 0, cost_per_unit: 0, bought_by: "store" });
+            setNewItem({ name: "", category: "general", unit: "pcs", min_stock: 0, current_stock: 0, cost_per_unit: 0, bought_by: "store", supplier_id: undefined, barcode: "" });
         },
         onError: () => {
             toast({ title: "Error", description: "Failed to create item", variant: "destructive" });
@@ -177,6 +199,51 @@ export default function Items() {
             toast({ title: "Error", description: "Failed to sync item", variant: "destructive" });
         },
     });
+
+    // Bulk sync from PosterPOS mutation
+    const bulkSyncMutation = useMutation({
+        mutationFn: async (ingredients: PosterPOSIngredient[]) => {
+            const res = await fetch("/api/partner/items/bulk-sync", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    items: ingredients.map(i => ({
+                        posterPosId: i.ingredient_id,
+                        name: i.ingredient_name,
+                        unit: i.ingredient_unit,
+                        currentStock: parseFloat(i.ingredient_left || "0"),
+                    }))
+                }),
+            });
+            if (!res.ok) throw new Error("Failed to bulk sync items");
+            return res.json();
+        },
+        onSuccess: (data) => {
+            toast({ title: "Items Synced", description: `${data.length} items imported from PosterPOS` });
+            queryClient.invalidateQueries({ queryKey: ["/api/partner/items"] });
+            setSelectedPOSIds(new Set());
+        },
+        onError: () => {
+            toast({ title: "Error", description: "Failed to bulk sync items", variant: "destructive" });
+        },
+    });
+
+    const [selectedPOSIds, setSelectedPOSIds] = useState<Set<number>>(new Set());
+
+    const togglePOSSelection = (id: number) => {
+        const next = new Set(selectedPOSIds);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setSelectedPOSIds(next);
+    };
+
+    const toggleAllPOS = () => {
+        if (selectedPOSIds.size === filteredPOSItems.length) {
+            setSelectedPOSIds(new Set());
+        } else {
+            setSelectedPOSIds(new Set(filteredPOSItems.map(i => i.ingredient_id)));
+        }
+    };
 
     // Push stock to PosterPOS mutation
     const pushToPOSMutation = useMutation({
@@ -317,6 +384,28 @@ export default function Items() {
                                                 </SelectItem>
                                             </SelectContent>
                                         </Select>
+                                        <div>
+                                            <Label className="text-slate-300">Default Supplier</Label>
+                                            <Select value={newItem.supplier_id} onValueChange={(v) => setNewItem({ ...newItem, supplier_id: v })}>
+                                                <SelectTrigger className="bg-slate-900 border-slate-600 text-white">
+                                                    <SelectValue placeholder="Select Supplier (Optional)" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {suppliers.map((s: any) => (
+                                                        <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                        <div>
+                                            <Label className="text-slate-300">Barcode</Label>
+                                            <Input
+                                                value={newItem.barcode}
+                                                onChange={(e) => setNewItem({ ...newItem, barcode: e.target.value })}
+                                                placeholder="Scan or enter barcode"
+                                                className="bg-slate-900 border-slate-600 text-white"
+                                            />
+                                        </div>
                                         <p className="text-xs text-slate-500 mt-1">Where is this item typically purchased?</p>
                                     </div>
                                     <Button
@@ -451,7 +540,31 @@ export default function Items() {
 
                     {/* PosterPOS Items Tab */}
                     <TabsContent value="posterpos">
-                        <div className="flex justify-end mb-4">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="border-slate-600 text-slate-300"
+                                    onClick={toggleAllPOS}
+                                >
+                                    {selectedPOSIds.size === filteredPOSItems.length ? "Deselect All" : "Select All"}
+                                </Button>
+                                {selectedPOSIds.size > 0 && (
+                                    <Button
+                                        size="sm"
+                                        className="bg-purple-600 hover:bg-purple-700"
+                                        onClick={() => {
+                                            const selected = filteredPOSItems.filter(i => selectedPOSIds.has(i.ingredient_id));
+                                            bulkSyncMutation.mutate(selected);
+                                        }}
+                                        disabled={bulkSyncMutation.isPending}
+                                    >
+                                        <CloudUpload className="h-4 w-4 mr-2" />
+                                        Import Selected ({selectedPOSIds.size})
+                                    </Button>
+                                )}
+                            </div>
                             <Button
                                 variant="outline"
                                 className="border-slate-600 text-slate-300"
@@ -477,14 +590,27 @@ export default function Items() {
                         ) : (
                             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                                 {filteredPOSItems.map((item) => (
-                                    <Card key={item.ingredient_id} className="bg-slate-800/50 border-slate-700">
+                                    <Card
+                                        key={item.ingredient_id}
+                                        className={`bg-slate-800/50 border-slate-700 transition-colors cursor-pointer ${selectedPOSIds.has(item.ingredient_id) ? 'ring-2 ring-purple-500 bg-purple-900/10' : ''
+                                            }`}
+                                        onClick={() => togglePOSSelection(item.ingredient_id)}
+                                    >
                                         <CardContent className="pt-6">
                                             <div className="flex items-start justify-between mb-3">
-                                                <div>
-                                                    <h3 className="text-white font-medium">{item.ingredient_name}</h3>
-                                                    <Badge variant="outline" className="border-purple-600 text-purple-400 mt-1">
-                                                        POS #{item.ingredient_id}
-                                                    </Badge>
+                                                <div className="flex gap-3">
+                                                    <div className={`mt-1 h-5 w-5 rounded border ${selectedPOSIds.has(item.ingredient_id)
+                                                        ? 'bg-purple-600 border-purple-600 flex items-center justify-center'
+                                                        : 'border-slate-600'
+                                                        }`}>
+                                                        {selectedPOSIds.has(item.ingredient_id) && <Check className="h-3 w-3 text-white" />}
+                                                    </div>
+                                                    <div>
+                                                        <h3 className="text-white font-medium">{item.ingredient_name}</h3>
+                                                        <Badge variant="outline" className="border-purple-600 text-purple-400 mt-1">
+                                                            POS #{item.ingredient_id}
+                                                        </Badge>
+                                                    </div>
                                                 </div>
                                             </div>
                                             <div className="text-sm mb-3">

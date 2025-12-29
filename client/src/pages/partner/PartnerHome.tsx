@@ -1,5 +1,6 @@
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { secureFetch } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -38,7 +39,7 @@ export default function PartnerHome() {
     const { data: approvals } = useQuery({
         queryKey: ["/api/partner/approvals"],
         queryFn: async () => {
-            const res = await fetch("/api/partner/approvals");
+            const res = await secureFetch("/api/partner/approvals");
             return res.json();
         },
         refetchInterval: 60000,
@@ -48,7 +49,7 @@ export default function PartnerHome() {
     const { data: alerts } = useQuery<Alert[]>({
         queryKey: ["/api/partner/alerts"],
         queryFn: async () => {
-            const res = await fetch("/api/partner/alerts");
+            const res = await secureFetch("/api/partner/alerts");
             return res.json();
         },
         refetchInterval: 60000,
@@ -58,7 +59,7 @@ export default function PartnerHome() {
     const { data: cashRecon } = useQuery({
         queryKey: ["/api/partner/reconciliation/cash"],
         queryFn: async () => {
-            const res = await fetch("/api/partner/reconciliation/cash");
+            const res = await secureFetch("/api/partner/reconciliation/cash");
             return res.json();
         },
     });
@@ -67,9 +68,19 @@ export default function PartnerHome() {
     const { data: flaggedShifts } = useQuery({
         queryKey: ["/api/partner/shifts/flagged"],
         queryFn: async () => {
-            const res = await fetch("/api/partner/shifts/flagged");
+            const res = await secureFetch("/api/partner/shifts/flagged");
             return res.json();
         },
+    });
+
+    // Fetch Audit Stream
+    const { data: auditStream } = useQuery({
+        queryKey: ["/api/partner/audit-stream"],
+        queryFn: async () => {
+            const res = await secureFetch("/api/partner/audit-stream");
+            return res.json();
+        },
+        refetchInterval: 30000,
     });
 
     const approvalCount = approvals?.length || 0;
@@ -264,9 +275,10 @@ export default function PartnerHome() {
                     ))}
                 </div>
 
-                {/* Recent Alerts */}
-                {alerts && alerts.length > 0 && (
-                    <Card className="mt-8 bg-slate-800/30 border-slate-700">
+                {/* Audit Stream & Alerts */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
+                    {/* Alerts Column */}
+                    <Card className="bg-slate-800/30 border-slate-700 h-full">
                         <CardHeader>
                             <CardTitle className="text-white text-lg flex items-center gap-2">
                                 <Bell className="h-5 w-5" />
@@ -274,35 +286,65 @@ export default function PartnerHome() {
                             </CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <div className="space-y-3">
-                                {alerts.slice(0, 5).map((alert, index) => (
-                                    <div
-                                        key={index}
-                                        className="flex items-center gap-3 p-3 rounded-lg bg-slate-800/50"
-                                    >
-                                        <div className={`
-                      p-2 rounded-full
-                      ${alert.severity === "warning" ? "bg-amber-600" :
-                                                alert.severity === "error" ? "bg-red-600" : "bg-blue-600"}
-                    `}>
-                                            {alert.type === "overdue_dispatch" ? (
-                                                <Package className="h-4 w-4 text-white" />
-                                            ) : alert.type === "flagged_shift" ? (
-                                                <AlertTriangle className="h-4 w-4 text-white" />
-                                            ) : (
-                                                <Bell className="h-4 w-4 text-white" />
-                                            )}
+                            {!alerts || alerts.length === 0 ? (
+                                <p className="text-slate-500 text-sm">No active alerts</p>
+                            ) : (
+                                <div className="space-y-3">
+                                    {alerts.slice(0, 5).map((alert, index) => (
+                                        <div
+                                            key={index}
+                                            className="flex items-center gap-3 p-3 rounded-lg bg-slate-800/50"
+                                        >
+                                            <div className={`
+                          p-2 rounded-full
+                          ${alert.severity === "warning" ? "bg-amber-600" :
+                                                    alert.severity === "error" ? "bg-red-600" : "bg-blue-600"}
+                        `}>
+                                                {alert.type === "overdue_dispatch" ? (
+                                                    <Package className="h-4 w-4 text-white" />
+                                                ) : alert.type === "flagged_shift" ? (
+                                                    <AlertTriangle className="h-4 w-4 text-white" />
+                                                ) : (
+                                                    <Bell className="h-4 w-4 text-white" />
+                                                )}
+                                            </div>
+                                            <p className="text-sm text-white flex-1">{alert.message}</p>
                                         </div>
-                                        <p className="text-sm text-white flex-1">{alert.message}</p>
-                                        <Badge variant="outline" className="border-slate-600 text-slate-400">
-                                            {alert.type.replace("_", " ")}
-                                        </Badge>
+                                    ))}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    {/* Audit Stream Column */}
+                    <Card className="bg-slate-800/30 border-slate-700 h-full">
+                        <CardHeader>
+                            <CardTitle className="text-white text-lg flex items-center gap-2">
+                                <ClipboardList className="h-5 w-5" />
+                                Audit Stream
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="space-y-4">
+                                {auditStream?.map((event: any) => (
+                                    <div key={event.id} className="flex gap-3 border-l-2 border-slate-700 pl-4 py-1 relative">
+                                        <div className={`absolute -left-[9px] top-2 w-4 h-4 rounded-full border-4 border-slate-900 
+                                            ${event.type === 'approval' ? 'bg-green-500' :
+                                                event.type === 'expense' ? 'bg-amber-500' : 'bg-blue-500'}`}
+                                        />
+                                        <div>
+                                            <p className="text-sm text-slate-200">{event.message}</p>
+                                            <p className="text-xs text-slate-500">
+                                                {new Date(event.timestamp).toLocaleTimeString()} • {new Date(event.timestamp).toLocaleDateString()}
+                                            </p>
+                                        </div>
                                     </div>
                                 ))}
+                                {!auditStream?.length && <p className="text-slate-500 text-sm">No activity recorded</p>}
                             </div>
                         </CardContent>
                     </Card>
-                )}
+                </div>
             </div>
         </div>
     );

@@ -27,7 +27,9 @@ import {
     ChevronUp,
     Plus,
     Calendar,
-    Filter
+    Filter,
+    FileJson,
+    Save as SaveIcon
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -115,6 +117,55 @@ export default function Insights() {
         },
     });
 
+    // Fetch reorder templates
+    const { data: templates = [], refetch: refetchTemplates } = useQuery({
+        queryKey: ["/api/partner/reorder-templates"],
+        queryFn: async () => {
+            const res = await fetch("/api/partner/reorder-templates");
+            return res.json();
+        },
+    });
+
+    const [templateName, setTemplateName] = useState("");
+    const [showTemplateSave, setShowTemplateSave] = useState(false);
+
+    // Save template mutation
+    const saveTemplateMutation = useMutation({
+        mutationFn: async () => {
+            const items = parData?.suggestions
+                ?.filter(s => selectedItems.has(s.ingredientId))
+                .map(s => ({
+                    storeItemId: undefined, // Could link if we had mapping
+                    itemName: s.name,
+                    quantity: Math.ceil(s.suggestion.orderQty),
+                    unit: "units"
+                })) || [];
+
+            if (items.length === 0) throw new Error("No items selected");
+
+            const res = await fetch("/api/partner/reorder-templates", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    name: templateName,
+                    items,
+                    createdBy: "Partner"
+                }),
+            });
+            if (!res.ok) throw new Error("Failed to save template");
+            return res.json();
+        },
+        onSuccess: () => {
+            toast({ title: "Template Saved", description: `"${templateName}" is now available for quick reuse.` });
+            setShowTemplateSave(false);
+            setTemplateName("");
+            refetchTemplates();
+        },
+        onError: (err: any) => {
+            toast({ title: "Error", description: err.message, variant: "destructive" });
+        }
+    });
+
     // Create reorder request mutation
     const createReorderMutation = useMutation({
         mutationFn: async (items: { name: string; quantity: number }[]) => {
@@ -143,6 +194,26 @@ export default function Insights() {
             toast({ title: "Error", description: "Failed to create reorder request", variant: "destructive" });
         },
     });
+
+    const applyTemplate = (templateId: string) => {
+        const template = templates.find((t: any) => t.id === templateId);
+        if (!template) return;
+
+        // Apply quantities to selected items
+        // For simplicity, we just select the items that are in the template
+        // Note: names match exactly
+        const templateItemNames = new Set(template.items.map((i: any) => i.item_name));
+        const newSelected = new Set(selectedItems);
+
+        parData?.suggestions?.forEach(s => {
+            if (templateItemNames.has(s.name)) {
+                newSelected.add(s.ingredientId);
+            }
+        });
+
+        setSelectedItems(newSelected);
+        toast({ title: "Template Applied", description: `Selected items from "${template.name}"` });
+    };
 
     const toggleSection = (section: string) => {
         setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
@@ -220,7 +291,23 @@ export default function Insights() {
                     </div>
                 </div>
 
-                {/* Sales Summary */}
+                {/* Templates Quick Actions */}
+                {templates.length > 0 && (
+                    <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+                        {templates.map((t: any) => (
+                            <Button
+                                key={t.id}
+                                variant="outline"
+                                size="sm"
+                                className="bg-slate-800/40 border-slate-700 text-slate-300 hover:bg-slate-700 whitespace-nowrap"
+                                onClick={() => applyTemplate(t.id)}
+                            >
+                                <FileJson className="h-4 w-4 mr-2 text-indigo-400" />
+                                {t.name}
+                            </Button>
+                        ))}
+                    </div>
+                )}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                     <Card className="bg-slate-800/50 border-slate-700">
                         <CardContent className="pt-6">
@@ -355,11 +442,49 @@ export default function Insights() {
                                         >
                                             {selectedItems.size === parItemsNeedingOrder.length ? "Deselect All" : "Select All"}
                                         </Button>
+                                        {selectedItems.size > 0 && (
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="text-indigo-400 hover:text-indigo-300"
+                                                onClick={() => setShowTemplateSave(true)}
+                                            >
+                                                <SaveIcon className="h-4 w-4 mr-1" />
+                                                Save Template
+                                            </Button>
+                                        )}
                                     </div>
                                 )}
                             </div>
                         </CardHeader>
                         <CardContent>
+                            {showTemplateSave && (
+                                <div className="mb-4 p-4 rounded-xl bg-indigo-900/20 border border-indigo-700/50 animate-in fade-in slide-in-from-top-2">
+                                    <Label className="text-indigo-200 text-xs mb-2 block">SAVE AS TEMPLATE</Label>
+                                    <div className="flex gap-2">
+                                        <Input
+                                            value={templateName}
+                                            onChange={(e) => setTemplateName(e.target.value)}
+                                            placeholder="Template Name (e.g. Weekly Veggies)"
+                                            className="bg-slate-900 border-indigo-700 text-white"
+                                        />
+                                        <Button
+                                            className="bg-indigo-600 hover:bg-indigo-700"
+                                            onClick={() => saveTemplateMutation.mutate()}
+                                            disabled={!templateName || saveTemplateMutation.isPending}
+                                        >
+                                            Save
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            onClick={() => setShowTemplateSave(false)}
+                                            className="text-slate-400"
+                                        >
+                                            Cancel
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
                             {!parItemsNeedingOrder.length ? (
                                 <p className="text-slate-400 text-center py-4">No suggestions - stock levels OK</p>
                             ) : (

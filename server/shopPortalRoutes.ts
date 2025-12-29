@@ -159,8 +159,67 @@ router.get('/shifts/history', async (req, res) => {
 });
 
 // ============================================================================
+// CASH HANDOVER
+// ============================================================================
+
+router.post('/shifts/handover', async (req, res) => {
+    try {
+        const schema = z.object({
+            totalCash: z.number(),
+            float: z.number(),
+            handover: z.number(),
+            method: z.enum(['physical', 'banking']),
+            pin: z.string().optional(),
+            mpesaCode: z.string().optional(),
+        });
+
+        const data = schema.parse(req.body);
+
+        // 1. Validation
+        if (data.method === 'physical') {
+            const secretPin = process.env.APP_PIN || "1234";
+            if (data.pin !== secretPin) {
+                return res.status(401).json({ message: "Invalid Owner PIN" });
+            }
+        } else {
+            if (!data.mpesaCode) {
+                return res.status(400).json({ message: "M-Pesa Code required" });
+            }
+        }
+
+        // 2. Log Handover (Update Current Open Shift)
+        const { data: shift } = await supabaseAdmin
+            .from('shifts')
+            .select('id')
+            .eq('status', 'open')
+            .single();
+
+        if (shift) {
+            await supabaseAdmin
+                .from('shifts')
+                .update({
+                    handover_amount: data.handover,
+                    handover_method: data.method,
+                    handover_ref: data.method === 'physical' ? 'Physical Signature' : data.mpesaCode
+                })
+                .eq('id', shift.id);
+        } else {
+            // If no open shift, maybe log to audit stream only? 
+            // But Handover is usually PART of the shift flow.
+            // We'll proceed but warn.
+        }
+
+        res.json({ success: true, message: "Handover recorded successfully" });
+    } catch (error: any) {
+        log(`Error recording handover: ${error.message}`);
+        res.status(500).json({ message: 'Failed to record handover' });
+    }
+});
+
+// ============================================================================
 // SHIFT-GATED MIDDLEWARE HELPER
 // ============================================================================
+
 
 async function requireOpenShift(req: any, res: any, next: any) {
     try {
@@ -309,6 +368,7 @@ router.post('/expenses/with-shift', requireOpenShift, async (req, res) => {
             paidTo: z.string().optional(),
             receiptNumber: z.string().optional(),
             notes: z.string().optional(),
+            evidenceUrl: z.string().optional(),
             items: z.array(z.object({
                 itemName: z.string(),
                 quantity: z.number(),
@@ -319,6 +379,13 @@ router.post('/expenses/with-shift', requireOpenShift, async (req, res) => {
 
         const data = schema.parse(req.body);
         const shiftId = (req as any).currentShiftId;
+
+        // Internal Control: Mandatory Evidence > 1000
+        if (data.amount > 1000 && !data.evidenceUrl) {
+            return res.status(400).json({
+                message: 'Mandatory Receipt Evidence required for amounts over KES 1,000'
+            });
+        }
 
         // Create expense linked to shift
         const { data: expense, error } = await supabaseAdmin
@@ -338,6 +405,17 @@ router.post('/expenses/with-shift', requireOpenShift, async (req, res) => {
             .single();
 
         if (error) throw error;
+
+        // Save evidence if provided
+        if (data.evidenceUrl) {
+            await supabaseAdmin.from('evidence_attachments').insert({
+                record_type: 'expense',
+                record_id: expense.id,
+                file_url: data.evidenceUrl,
+                uploaded_by: data.paidBy,
+                notes: 'Mandatory evidence'
+            });
+        }
 
         // Add items if supermarket expense
         if (data.expenseType === 'supermarket' && data.items) {
@@ -662,11 +740,11 @@ router.get('/stock/common-items', async (req, res) => {
     try {
         const { data, error } = await supabaseAdmin
             .from('store_items')
-            .select('id, name, unit')
+            .select('id, name, unit, category')
             .eq('is_active', true)
             .eq('requires_counting', true)
             .order('name')
-            .limit(50);
+            .limit(100);
 
         if (error) throw error;
         res.json(data || []);
