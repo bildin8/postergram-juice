@@ -97,13 +97,15 @@ export async function syncRecipesFromPoster(): Promise<{
         // Step 2: Sync products with recipes
         log('Starting recipe sync from Poster...', 'inventory');
         const productsWithRecipes = await posterClient.getAllProductsWithRecipes();
+        log(`Found ${productsWithRecipes.length} products with recipes`, 'inventory');
 
         for (const product of productsWithRecipes) {
-            await syncSingleRecipe(product, unitsMap);
+            const linked = await syncSingleRecipe(product, unitsMap);
+            recipeIngredientsCreated += linked;
             recipesCreated++;
         }
 
-        log(`Synced ${recipesCreated} recipes`, 'inventory');
+        log(`Synced ${recipesCreated} recipes with ${recipeIngredientsCreated} recipe ingredients`, 'inventory');
 
         return { recipesCreated, ingredientsCreated, recipeIngredientsCreated };
     } catch (error) {
@@ -115,7 +117,9 @@ export async function syncRecipesFromPoster(): Promise<{
 async function syncSingleRecipe(
     product: ProductWithRecipe,
     unitsMap: Map<string, string>
-): Promise<void> {
+): Promise<number> {
+    let ingredientsLinked = 0;
+
     // Upsert the recipe
     const { data: recipe, error: recipeError } = await supabaseAdmin
         .from('recipes')
@@ -131,7 +135,7 @@ async function syncSingleRecipe(
 
     if (recipeError || !recipe) {
         log(`Error upserting recipe ${product.product_name}: ${recipeError?.message}`, 'inventory');
-        return;
+        return 0;
     }
 
     // Delete existing recipe ingredients (refresh)
@@ -142,18 +146,24 @@ async function syncSingleRecipe(
 
     // Insert recipe ingredients
     if (product.ingredients && product.ingredients.length > 0) {
+        log(`Product ${product.product_name} has ${product.ingredients.length} ingredients`, 'inventory');
+
         for (const ing of product.ingredients) {
             // Find the ingredient in our database
-            const { data: dbIngredient } = await supabaseAdmin
+            const { data: dbIngredient, error: findError } = await supabaseAdmin
                 .from('ingredients')
                 .select('id')
                 .eq('poster_ingredient_id', ing.ingredient_id.toString())
                 .single();
 
+            if (findError) {
+                log(`Could not find ingredient ${ing.ingredient_id} (${ing.ingredient_name}): ${findError.message}`, 'inventory');
+            }
+
             if (dbIngredient) {
                 const unitId = unitsMap.get(ing.structure_unit?.toLowerCase() || 'g');
 
-                await supabaseAdmin.from('recipe_ingredients').insert({
+                const { error: insertError } = await supabaseAdmin.from('recipe_ingredients').insert({
                     recipe_id: recipe.id,
                     ingredient_id: dbIngredient.id,
                     quantity: ing.structure_netto || ing.structure_brutto,
@@ -161,6 +171,12 @@ async function syncSingleRecipe(
                     is_optional: false,
                     is_default: true
                 });
+
+                if (!insertError) {
+                    ingredientsLinked++;
+                } else {
+                    log(`Error inserting recipe_ingredient: ${insertError.message}`, 'inventory');
+                }
             }
         }
     }
@@ -177,7 +193,7 @@ async function syncSingleRecipe(
                         .single();
 
                     if (dbIngredient) {
-                        await supabaseAdmin.from('recipe_ingredients').insert({
+                        const { error: insertError } = await supabaseAdmin.from('recipe_ingredients').insert({
                             recipe_id: recipe.id,
                             ingredient_id: dbIngredient.id,
                             quantity: mod.netto || mod.brutto,
@@ -188,11 +204,15 @@ async function syncSingleRecipe(
                             modification_name: mod.name,
                             poster_modification_id: mod.dish_modification_id
                         });
+
+                        if (!insertError) ingredientsLinked++;
                     }
                 }
             }
         }
     }
+
+    return ingredientsLinked;
 }
 
 // ============================================================================
