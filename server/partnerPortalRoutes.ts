@@ -606,10 +606,10 @@ router.get('/insights/smart-replenishment', async (req, res) => {
             }
         }
 
-        // 4. Get ingredient details (unit, current stock) from local tables
+        // 4. Get ingredient details (unit) from local tables
         const ingredientIds = Array.from(ingredientUsage.keys());
 
-        let ingredientDetails: Map<string, { unit: string; currentStock: number }> = new Map();
+        let ingredientDetails: Map<string, { unit: string }> = new Map();
 
         if (ingredientIds.length > 0) {
             const { data: ingredients } = await supabaseAdmin
@@ -621,47 +621,40 @@ router.get('/insights/smart-replenishment', async (req, res) => {
                 `)
                 .in('id', ingredientIds);
 
-            const { data: stockData } = await supabaseAdmin
-                .from('ingredient_stock')
-                .select('ingredient_id, current_stock')
-                .in('ingredient_id', ingredientIds);
-
-            // Build stock map
-            const stockMap = new Map((stockData || []).map(s => [s.ingredient_id, s.current_stock || 0]));
-
             for (const ing of ingredients || []) {
                 ingredientDetails.set(ing.id, {
-                    unit: (ing.default_unit as any)?.abbreviation || 'units',
-                    currentStock: stockMap.get(ing.id) || 0
+                    unit: (ing.default_unit as any)?.abbreviation || 'units'
                 });
             }
         }
 
-        // 5. Generate Forecast Report
+        // 5. Generate Simple Forecast Report (Usage-Based Only)
+        // NOTE: We're NOT using PosterPOS stock levels as they're unreliable (owner hasn't updated supply entries)
         const report = [];
 
         for (const [ingId, data] of ingredientUsage.entries()) {
-            const details = ingredientDetails.get(ingId) || { unit: 'units', currentStock: 0 };
+            const details = ingredientDetails.get(ingId) || { unit: 'units' };
             const dailyAvg = data.used / days;
-            const requiredStock = dailyAvg * coverageDays;
-            const currentStock = details.currentStock;
-            const toOrder = Math.max(0, requiredStock - currentStock);
+            const weeklyNeed = dailyAvg * 7;
+            const biweeklyNeed = dailyAvg * 14;
 
             report.push({
                 ingredientId: ingId,
                 name: data.name,
                 unit: details.unit,
-                totalUsed30d: Math.round(data.used * 100) / 100,
+                // Usage stats
+                totalUsedInPeriod: Math.round(data.used * 100) / 100,
                 dailyAvgUsage: Math.round(dailyAvg * 100) / 100,
-                currentStock: Math.round(currentStock * 100) / 100,
-                requiredForCoverage: Math.round(requiredStock * 100) / 100,
-                recommendedOrder: Math.round(toOrder * 100) / 100,
-                status: toOrder > 0 ? 'reorder' : 'ok'
+                // Order suggestions (pure usage-based)
+                weeklyNeed: Math.round(weeklyNeed * 100) / 100,
+                biweeklyNeed: Math.round(biweeklyNeed * 100) / 100,
+                // Urgency indicator based on usage volume
+                usageLevel: dailyAvg > 10 ? 'high' : dailyAvg > 5 ? 'medium' : 'low'
             });
         }
 
-        // Sort by urgency (highest recommended order first)
-        report.sort((a, b) => b.recommendedOrder - a.recommendedOrder);
+        // Sort by highest daily usage
+        report.sort((a, b) => b.dailyAvgUsage - a.dailyAvgUsage);
 
         res.json({
             period: {
@@ -669,8 +662,8 @@ router.get('/insights/smart-replenishment', async (req, res) => {
                 to: todaysDate.toISOString().split('T')[0],
                 days
             },
-            coverageTargetDays: coverageDays,
-            dataSource: 'local_db', // Indicates we used synced local data
+            note: "Order quantities based on usage only. PosterPOS stock levels not used as they may be inaccurate.",
+            dataSource: 'local_db',
             items: report
         });
 
