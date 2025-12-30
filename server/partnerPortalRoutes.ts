@@ -524,61 +524,57 @@ router.post('/sync/populate-items', async (req, res) => {
         // Get all ingredients (already synced from PosterPOS)
         const { data: ingredients, error: ingError } = await supabaseAdmin
             .from('ingredients')
-            .select(`
-                id,
-                name,
-                poster_ingredient_id,
-                default_unit_id,
-                min_stock_level,
-                units_of_measure (abbreviation)
-            `)
+            .select('id, name, poster_ingredient_id, default_unit_id, min_stock_level')
             .eq('is_active', true);
 
         if (ingError) throw ingError;
 
+        // Get existing store_items names to avoid duplicates
+        const { data: existingItems } = await supabaseAdmin
+            .from('store_items')
+            .select('name');
+
+        const existingNames = new Set((existingItems || []).map(i => i.name.toLowerCase()));
+
         let created = 0;
-        let updated = 0;
         let skipped = 0;
+        const errors: string[] = [];
 
         for (const ing of ingredients || []) {
-            // Check if already exists in store_items
-            const { data: existing } = await supabaseAdmin
+            // Skip if already exists
+            if (existingNames.has(ing.name.toLowerCase())) {
+                skipped++;
+                continue;
+            }
+
+            // Get unit abbreviation
+            let unitAbbrev = 'units';
+            if (ing.default_unit_id) {
+                const { data: unitData } = await supabaseAdmin
+                    .from('units_of_measure')
+                    .select('abbreviation')
+                    .eq('id', ing.default_unit_id)
+                    .single();
+                unitAbbrev = unitData?.abbreviation || 'units';
+            }
+
+            // Insert new store_item
+            const { error: insertError } = await supabaseAdmin
                 .from('store_items')
-                .select('id')
-                .eq('name', ing.name)
-                .single();
+                .insert({
+                    name: ing.name,
+                    category: 'ingredient',
+                    unit: unitAbbrev,
+                    min_stock: 0,
+                    current_stock: 0,
+                    bought_by: 'store',
+                    is_active: true
+                });
 
-            if (existing) {
-                // Update existing
-                await supabaseAdmin
-                    .from('store_items')
-                    .update({
-                        unit: (ing.units_of_measure as any)?.abbreviation || 'units',
-                        min_stock: ing.min_stock_level || 0,
-                        updated_at: new Date().toISOString()
-                    })
-                    .eq('id', existing.id);
-                updated++;
+            if (insertError) {
+                errors.push(`${ing.name}: ${insertError.message}`);
             } else {
-                // Create new store_item
-                const { error: insertError } = await supabaseAdmin
-                    .from('store_items')
-                    .insert({
-                        name: ing.name,
-                        category: 'ingredient', // Default category
-                        unit: (ing.units_of_measure as any)?.abbreviation || 'units',
-                        min_stock: ing.min_stock_level || 0,
-                        current_stock: 0, // Start with 0, owner will update
-                        bought_by: 'store', // Default to store purchases
-                        is_active: true
-                    });
-
-                if (!insertError) {
-                    created++;
-                } else {
-                    log(`Error creating store_item ${ing.name}: ${insertError.message}`);
-                    skipped++;
-                }
+                created++;
             }
         }
 
@@ -586,14 +582,14 @@ router.post('/sync/populate-items', async (req, res) => {
             success: true,
             message: `Populated store_items from ingredients`,
             created,
-            updated,
             skipped,
-            totalIngredients: ingredients?.length || 0
+            totalIngredients: ingredients?.length || 0,
+            errors: errors.length > 0 ? errors : undefined
         });
 
     } catch (error: any) {
         log(`Error populating items: ${error.message}`);
-        res.status(500).json({ message: 'Failed to populate items' });
+        res.status(500).json({ message: 'Failed to populate items', error: error.message });
     }
 });
 
