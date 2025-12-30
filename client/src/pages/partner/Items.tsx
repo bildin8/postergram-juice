@@ -93,7 +93,9 @@ export default function Items() {
         queryKey: ["/api/partner/suppliers"],
         queryFn: async () => {
             const res = await secureFetch("/api/partner/suppliers");
-            return res.json();
+            if (!res.ok) return [];
+            const data = await res.json();
+            return Array.isArray(data) ? data : [];
         },
     });
 
@@ -103,7 +105,8 @@ export default function Items() {
         queryFn: async () => {
             const res = await secureFetch("/api/partner/items");
             if (!res.ok) return [];
-            return res.json();
+            const data = await res.json();
+            return Array.isArray(data) ? data : [];
         },
     });
 
@@ -113,7 +116,8 @@ export default function Items() {
         queryFn: async () => {
             const res = await secureFetch("/api/posterpos/ingredients");
             if (!res.ok) return [];
-            return res.json();
+            const data = await res.json();
+            return Array.isArray(data) ? data : [];
         },
     });
 

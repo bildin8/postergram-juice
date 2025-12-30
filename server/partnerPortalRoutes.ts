@@ -956,6 +956,110 @@ router.get('/insights/consumption', async (req, res) => {
 
 
 // ============================================================================
+// SUPPLIER MANAGEMENT
+// ============================================================================
+
+// Get all suppliers
+router.get('/suppliers', async (req, res) => {
+    try {
+        const { data, error } = await supabaseAdmin
+            .from('suppliers')
+            .select('*')
+            .order('name');
+
+        if (error) throw error;
+        res.json(data || []);
+    } catch (error: any) {
+        log(`Error fetching suppliers: ${error.message}`);
+        res.status(500).json({ message: 'Failed to fetch suppliers' });
+    }
+});
+
+// Create supplier
+router.post('/suppliers', async (req, res) => {
+    try {
+        const schema = z.object({
+            name: z.string().min(1),
+            contact_person: z.string().optional(),
+            phone: z.string().optional(),
+            email: z.string().email().optional().or(z.literal('')),
+            category: z.string().optional(),
+            payment_terms: z.string().optional(),
+            is_active: z.boolean().optional()
+        });
+
+        const data = schema.parse(req.body);
+
+        const { data: supplier, error } = await supabaseAdmin
+            .from('suppliers')
+            .insert({
+                ...data,
+                created_at: new Date().toISOString()
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json(supplier);
+    } catch (error: any) {
+        log(`Error creating supplier: ${error.message}`);
+        res.status(500).json({ message: 'Failed to create supplier' });
+    }
+});
+
+// Update supplier
+router.put('/suppliers/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const schema = z.object({
+            name: z.string().min(1).optional(),
+            contact_person: z.string().optional(),
+            phone: z.string().optional(),
+            email: z.string().email().optional().or(z.literal('')),
+            category: z.string().optional(),
+            payment_terms: z.string().optional(),
+            is_active: z.boolean().optional()
+        });
+
+        const data = schema.parse(req.body);
+
+        const { data: supplier, error } = await supabaseAdmin
+            .from('suppliers')
+            .update({
+                ...data,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json(supplier);
+    } catch (error: any) {
+        log(`Error updating supplier: ${error.message}`);
+        res.status(500).json({ message: 'Failed to update supplier' });
+    }
+});
+
+// Delete supplier
+router.delete('/suppliers/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { error } = await supabaseAdmin
+            .from('suppliers')
+            .delete()
+            .eq('id', id);
+
+        if (error) throw error;
+        res.json({ message: 'Supplier deleted successfully' });
+    } catch (error: any) {
+        log(`Error deleting supplier: ${error.message}`);
+        res.status(500).json({ message: 'Failed to delete supplier' });
+    }
+});
+
+
+// ============================================================================
 // SUPPLIER MANAGEMENT & ANALYTICS
 // ============================================================================
 
