@@ -518,6 +518,85 @@ router.post('/sync/historical-transactions', async (req, res) => {
     }
 });
 
+// Populate store_items from synced ingredients (move to local DB)
+router.post('/sync/populate-items', async (req, res) => {
+    try {
+        // Get all ingredients (already synced from PosterPOS)
+        const { data: ingredients, error: ingError } = await supabaseAdmin
+            .from('ingredients')
+            .select(`
+                id,
+                name,
+                poster_ingredient_id,
+                default_unit_id,
+                min_stock_level,
+                units_of_measure (abbreviation)
+            `)
+            .eq('is_active', true);
+
+        if (ingError) throw ingError;
+
+        let created = 0;
+        let updated = 0;
+        let skipped = 0;
+
+        for (const ing of ingredients || []) {
+            // Check if already exists in store_items
+            const { data: existing } = await supabaseAdmin
+                .from('store_items')
+                .select('id')
+                .eq('name', ing.name)
+                .single();
+
+            if (existing) {
+                // Update existing
+                await supabaseAdmin
+                    .from('store_items')
+                    .update({
+                        unit: (ing.units_of_measure as any)?.abbreviation || 'units',
+                        min_stock: ing.min_stock_level || 0,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('id', existing.id);
+                updated++;
+            } else {
+                // Create new store_item
+                const { error: insertError } = await supabaseAdmin
+                    .from('store_items')
+                    .insert({
+                        name: ing.name,
+                        category: 'ingredient', // Default category
+                        unit: (ing.units_of_measure as any)?.abbreviation || 'units',
+                        min_stock: ing.min_stock_level || 0,
+                        current_stock: 0, // Start with 0, owner will update
+                        bought_by: 'store', // Default to store purchases
+                        is_active: true
+                    });
+
+                if (!insertError) {
+                    created++;
+                } else {
+                    log(`Error creating store_item ${ing.name}: ${insertError.message}`);
+                    skipped++;
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            message: `Populated store_items from ingredients`,
+            created,
+            updated,
+            skipped,
+            totalIngredients: ingredients?.length || 0
+        });
+
+    } catch (error: any) {
+        log(`Error populating items: ${error.message}`);
+        res.status(500).json({ message: 'Failed to populate items' });
+    }
+});
+
 // ============================================================================
 // SMART REPLENISHMENT (Forecast based on past sales - uses LOCAL synced data)
 // ============================================================================
