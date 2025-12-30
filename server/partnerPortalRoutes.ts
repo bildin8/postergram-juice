@@ -524,12 +524,25 @@ router.post('/sync/historical-transactions', async (req, res) => {
 
 router.get('/insights/smart-replenishment', async (req, res) => {
     try {
-        // 1. Timeframe (Last 30 Days)
-        const days = 30;
+        // 1. Timeframe - Accept custom date range or default to last 30 days
         const coverageDays = parseInt(req.query.coverage as string) || 7; // Goal: Have 7 days of stock
-        const todaysDate = new Date();
-        const pastDate = new Date();
-        pastDate.setDate(todaysDate.getDate() - days);
+
+        let todaysDate: Date;
+        let pastDate: Date;
+        let days: number;
+
+        if (req.query.from && req.query.to) {
+            // Custom date range
+            pastDate = new Date(req.query.from as string);
+            todaysDate = new Date(req.query.to as string);
+            days = Math.ceil((todaysDate.getTime() - pastDate.getTime()) / (1000 * 60 * 60 * 24));
+        } else {
+            // Default: last N days (configurable via 'days' param)
+            days = parseInt(req.query.days as string) || 30;
+            todaysDate = new Date();
+            pastDate = new Date();
+            pastDate.setDate(todaysDate.getDate() - days);
+        }
 
         // 2. Query LOCAL ingredient_consumption table (synced from PosterPOS transactions)
         // This uses data we already have instead of calling PosterPOS API

@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Link } from "wouter";
-import { ArrowLeft, TrendingUp, Package, AlertTriangle, CheckCircle } from "lucide-react";
+import { ArrowLeft, TrendingUp, Package, AlertTriangle, CheckCircle, Calendar, RefreshCw } from "lucide-react";
 import { secureFetch } from "@/lib/api";
 
 interface ReplenishmentItem {
@@ -21,14 +23,34 @@ interface ReplenishmentItem {
 interface ReplenishmentData {
     period: { from: string; to: string; days: number };
     coverageTargetDays: number;
+    dataSource?: string;
     items: ReplenishmentItem[];
 }
 
 export default function SmartReplenishment() {
-    const { data, isLoading, error } = useQuery<ReplenishmentData>({
-        queryKey: ["/api/partner/insights/smart-replenishment"],
+    const [days, setDays] = useState(30);
+    const [coverage, setCoverage] = useState(7);
+    const [customFrom, setCustomFrom] = useState("");
+    const [customTo, setCustomTo] = useState("");
+    const [useCustomRange, setUseCustomRange] = useState(false);
+
+    // Build query params
+    const buildParams = () => {
+        const params = new URLSearchParams();
+        params.set("coverage", coverage.toString());
+        if (useCustomRange && customFrom && customTo) {
+            params.set("from", customFrom);
+            params.set("to", customTo);
+        } else {
+            params.set("days", days.toString());
+        }
+        return params.toString();
+    };
+
+    const { data, isLoading, error, refetch } = useQuery<ReplenishmentData>({
+        queryKey: ["/api/partner/insights/smart-replenishment", days, coverage, customFrom, customTo, useCustomRange],
         queryFn: async () => {
-            const res = await secureFetch("/api/partner/insights/smart-replenishment");
+            const res = await secureFetch(`/api/partner/insights/smart-replenishment?${buildParams()}`);
             if (!res.ok) throw new Error("Failed to fetch");
             return res.json();
         },
@@ -48,22 +70,94 @@ export default function SmartReplenishment() {
                             Back to Partner
                         </Button>
                     </Link>
-                    <div className="flex justify-between items-start">
+                    <div className="flex flex-col lg:flex-row justify-between items-start gap-4">
                         <div>
                             <h1 className="text-3xl font-bold text-white mb-2">Smart Replenishment</h1>
                             <p className="text-slate-400">
-                                AI-calculated reorder suggestions based on 30-day sales history
+                                AI-calculated reorder suggestions based on sales history
                             </p>
                         </div>
-                        {data && (
-                            <div className="text-right">
-                                <p className="text-sm text-slate-400">Analysis Period</p>
-                                <p className="text-white font-medium">Last {data.period.days} Days</p>
-                                <p className="text-xs text-slate-500">
-                                    Coverage Target: {data.coverageTargetDays} days
-                                </p>
+
+                        {/* Date Range Filter */}
+                        <Card className="bg-slate-800/50 border-slate-700 p-4">
+                            <div className="flex flex-wrap gap-3 items-center">
+                                <div className="flex items-center gap-2">
+                                    <Calendar className="h-4 w-4 text-slate-400" />
+                                    <span className="text-sm text-slate-400">Period:</span>
+                                </div>
+
+                                {/* Quick Presets */}
+                                <div className="flex gap-1">
+                                    {[7, 14, 30, 60].map((d) => (
+                                        <Button
+                                            key={d}
+                                            size="sm"
+                                            variant={days === d && !useCustomRange ? "default" : "outline"}
+                                            className={days === d && !useCustomRange ? "bg-purple-600" : "border-slate-600 text-slate-300"}
+                                            onClick={() => { setDays(d); setUseCustomRange(false); }}
+                                        >
+                                            {d}d
+                                        </Button>
+                                    ))}
+                                </div>
+
+                                {/* Custom Range Toggle */}
+                                <Button
+                                    size="sm"
+                                    variant={useCustomRange ? "default" : "outline"}
+                                    className={useCustomRange ? "bg-purple-600" : "border-slate-600 text-slate-300"}
+                                    onClick={() => setUseCustomRange(!useCustomRange)}
+                                >
+                                    Custom
+                                </Button>
+
+                                {/* Coverage Days */}
+                                <div className="flex items-center gap-2 ml-2">
+                                    <span className="text-sm text-slate-400">Cover:</span>
+                                    <select
+                                        value={coverage}
+                                        onChange={(e) => setCoverage(parseInt(e.target.value))}
+                                        className="bg-slate-700 border-slate-600 text-white text-sm rounded px-2 py-1"
+                                    >
+                                        {[3, 5, 7, 14, 21].map(d => (
+                                            <option key={d} value={d}>{d} days</option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <Button size="sm" variant="ghost" onClick={() => refetch()} className="text-slate-400">
+                                    <RefreshCw className="h-4 w-4" />
+                                </Button>
                             </div>
-                        )}
+
+                            {/* Custom Date Inputs */}
+                            {useCustomRange && (
+                                <div className="flex gap-2 mt-3">
+                                    <Input
+                                        type="date"
+                                        value={customFrom}
+                                        onChange={(e) => setCustomFrom(e.target.value)}
+                                        className="bg-slate-700 border-slate-600 text-white text-sm"
+                                        placeholder="From"
+                                    />
+                                    <Input
+                                        type="date"
+                                        value={customTo}
+                                        onChange={(e) => setCustomTo(e.target.value)}
+                                        className="bg-slate-700 border-slate-600 text-white text-sm"
+                                        placeholder="To"
+                                    />
+                                </div>
+                            )}
+
+                            {/* Current Selection Info */}
+                            {data && (
+                                <div className="mt-2 text-xs text-slate-500">
+                                    Analyzing: {data.period.from} to {data.period.to} ({data.period.days} days)
+                                    {data.dataSource && <span className="ml-2">• Source: {data.dataSource}</span>}
+                                </div>
+                            )}
+                        </Card>
                     </div>
                 </div>
 
