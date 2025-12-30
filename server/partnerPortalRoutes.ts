@@ -567,7 +567,7 @@ router.post('/sync/populate-items', async (req, res) => {
                     unit: unitAbbrev,
                     min_stock: 0,
                     current_stock: 0,
-                    bought_by: 'store',
+                    // bought_by default is 'store' in DB
                     is_active: true
                 });
 
