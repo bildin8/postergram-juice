@@ -525,60 +525,85 @@ router.post('/sync/historical-transactions', async (req, res) => {
 router.get('/insights/smart-replenishment', async (req, res) => {
     try {
         // 1. Timeframe - Accept custom date range or default to last 30 days
-        const coverageDays = parseInt(req.query.coverage as string) || 7; // Goal: Have 7 days of stock
+        const coverageDays = parseInt(req.query.coverage as string) || 7;
 
         let todaysDate: Date;
         let pastDate: Date;
         let days: number;
 
         if (req.query.from && req.query.to) {
-            // Custom date range
             pastDate = new Date(req.query.from as string);
             todaysDate = new Date(req.query.to as string);
             days = Math.ceil((todaysDate.getTime() - pastDate.getTime()) / (1000 * 60 * 60 * 24));
         } else {
-            // Default: last N days (configurable via 'days' param)
             days = parseInt(req.query.days as string) || 30;
             todaysDate = new Date();
             pastDate = new Date();
             pastDate.setDate(todaysDate.getDate() - days);
         }
 
-        // 2. Query LOCAL ingredient_consumption table (synced from PosterPOS transactions)
-        // This uses data we already have instead of calling PosterPOS API
-        const { data: consumptionData, error: consumptionError } = await supabaseAdmin
-            .from('ingredient_consumption')
-            .select(`
-                ingredient_id,
-                ingredient_name,
-                quantity_consumed,
-                sale_timestamp
-            `)
-            .gte('sale_timestamp', pastDate.toISOString())
-            .lte('sale_timestamp', todaysDate.toISOString());
+        // 2. Query existing sales_records table (already synced from PosterPOS)
+        const { data: salesData, error: salesError } = await supabaseAdmin
+            .from('sales_records')
+            .select('item_name, quantity, timestamp')
+            .gte('timestamp', pastDate.toISOString())
+            .lte('timestamp', todaysDate.toISOString());
 
-        if (consumptionError) {
-            log(`Error fetching consumption: ${consumptionError.message}`);
-            // Fallback: If local data not available, try PosterPOS API
+        if (salesError) {
+            log(`Error fetching sales: ${salesError.message}`);
             return await fallbackToAPIReplenishment(req, res, days, coverageDays);
         }
 
-        // 3. Aggregate Ingredient Usage from local consumption data
+        // 3. Aggregate product sales by item_name
+        const productSales = new Map<string, number>();
+        for (const sale of salesData || []) {
+            const qty = parseFloat(sale.quantity) || 0;
+            productSales.set(sale.item_name, (productSales.get(sale.item_name) || 0) + qty);
+        }
+
+        // 4. Get recipes from local DB (synced from PosterPOS)
+        const { data: recipes } = await supabaseAdmin
+            .from('recipes')
+            .select(`
+                id,
+                name,
+                poster_product_id,
+                recipe_ingredients (
+                    ingredient_id,
+                    quantity,
+                    is_optional,
+                    ingredient:ingredients (
+                        id,
+                        name,
+                        default_unit_id
+                    )
+                )
+            `)
+            .eq('is_active', true);
+
+        // 5. Calculate ingredient usage from sales × recipe
         const ingredientUsage = new Map<string, {
             id: string;
             name: string;
             used: number;
         }>();
 
-        for (const row of consumptionData || []) {
-            const ingId = row.ingredient_id;
-            const current = ingredientUsage.get(ingId) || {
-                id: ingId,
-                name: row.ingredient_name || 'Unknown',
-                used: 0
-            };
-            current.used += parseFloat(row.quantity_consumed as any) || 0;
-            ingredientUsage.set(ingId, current);
+        for (const recipe of recipes || []) {
+            // Match by recipe name to sales item_name
+            const soldQty = productSales.get(recipe.name) || 0;
+            if (soldQty > 0 && recipe.recipe_ingredients) {
+                for (const ri of recipe.recipe_ingredients as any[]) {
+                    if (ri.is_optional) continue; // Skip optional ingredients for base calculation
+
+                    const ingId = ri.ingredient_id;
+                    const usageQty = soldQty * (parseFloat(ri.quantity) || 0);
+                    const ingName = ri.ingredient?.name || 'Unknown';
+
+                    const current = ingredientUsage.get(ingId) || { id: ingId, name: ingName, used: 0 };
+                    current.used += usageQty;
+                    ingredientUsage.set(ingId, current);
+                }
+            }
         }
 
         // 4. Get ingredient details (unit, current stock) from local tables

@@ -35,6 +35,7 @@ import {
     Check
 } from "lucide-react";
 import { Link } from "wouter";
+import { secureFetch } from "@/lib/api";
 
 interface StoreItem {
     id: string;
@@ -91,7 +92,7 @@ export default function Items() {
     const { data: suppliers = [] } = useQuery({
         queryKey: ["/api/partner/suppliers"],
         queryFn: async () => {
-            const res = await fetch("/api/partner/suppliers");
+            const res = await secureFetch("/api/partner/suppliers");
             return res.json();
         },
     });
@@ -100,7 +101,7 @@ export default function Items() {
     const { data: storeItems, isLoading: storeLoading } = useQuery<StoreItem[]>({
         queryKey: ["/api/partner/items"],
         queryFn: async () => {
-            const res = await fetch("/api/partner/items");
+            const res = await secureFetch("/api/partner/items");
             if (!res.ok) return [];
             return res.json();
         },
@@ -110,7 +111,7 @@ export default function Items() {
     const { data: posIngredients, isLoading: posLoading, refetch: refetchPOS } = useQuery<PosterPOSIngredient[]>({
         queryKey: ["/api/posterpos/ingredients"],
         queryFn: async () => {
-            const res = await fetch("/api/posterpos/ingredients");
+            const res = await secureFetch("/api/posterpos/ingredients");
             if (!res.ok) return [];
             return res.json();
         },
@@ -119,7 +120,7 @@ export default function Items() {
     // Create item mutation
     const createMutation = useMutation({
         mutationFn: async (item: typeof newItem) => {
-            const res = await fetch("/api/partner/items", {
+            const res = await secureFetch("/api/partner/items", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(item),
@@ -141,7 +142,7 @@ export default function Items() {
     // Update item mutation
     const updateMutation = useMutation({
         mutationFn: async (item: StoreItem) => {
-            const res = await fetch(`/api/partner/items/${item.id}`, {
+            const res = await secureFetch(`/api/partner/items/${item.id}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(item),
@@ -162,7 +163,7 @@ export default function Items() {
     // Delete item mutation
     const deleteMutation = useMutation({
         mutationFn: async (id: string) => {
-            const res = await fetch(`/api/partner/items/${id}`, { method: "DELETE" });
+            const res = await secureFetch(`/api/partner/items/${id}`, { method: "DELETE" });
             if (!res.ok) throw new Error("Failed to delete item");
             return res.json();
         },
@@ -178,7 +179,7 @@ export default function Items() {
     // Sync from PosterPOS mutation
     const syncFromPOSMutation = useMutation({
         mutationFn: async (ingredient: PosterPOSIngredient) => {
-            const res = await fetch("/api/partner/items/sync-from-pos", {
+            const res = await secureFetch("/api/partner/items/sync-from-pos", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -203,7 +204,7 @@ export default function Items() {
     // Bulk sync from PosterPOS mutation
     const bulkSyncMutation = useMutation({
         mutationFn: async (ingredients: PosterPOSIngredient[]) => {
-            const res = await fetch("/api/partner/items/bulk-sync", {
+            const res = await secureFetch("/api/partner/items/bulk-sync", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -248,7 +249,7 @@ export default function Items() {
     // Push stock to PosterPOS mutation
     const pushToPOSMutation = useMutation({
         mutationFn: async (item: StoreItem) => {
-            const res = await fetch("/api/posterpos/stock/update", {
+            const res = await secureFetch("/api/posterpos/stock/update", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
