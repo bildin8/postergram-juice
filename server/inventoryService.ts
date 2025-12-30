@@ -147,7 +147,7 @@ async function syncSingleRecipe(
             const { data: dbIngredient } = await supabaseAdmin
                 .from('ingredients')
                 .select('id')
-                .eq('poster_ingredient_id', ing.ingredient_id)
+                .eq('poster_ingredient_id', ing.ingredient_id.toString())
                 .single();
 
             if (dbIngredient) {
@@ -173,7 +173,7 @@ async function syncSingleRecipe(
                     const { data: dbIngredient } = await supabaseAdmin
                         .from('ingredients')
                         .select('id')
-                        .eq('poster_ingredient_id', mod.ingredient_id)
+                        .eq('poster_ingredient_id', mod.ingredient_id.toString())
                         .single();
 
                     if (dbIngredient) {
