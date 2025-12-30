@@ -1060,6 +1060,109 @@ router.delete('/suppliers/:id', async (req, res) => {
 
 
 // ============================================================================
+// PROFITABILITY ENGINE
+// ============================================================================
+
+router.get('/insights/profitability', async (req, res) => {
+    try {
+        // 1. Get recipes with ingredients
+        const { data: recipes, error: recipeError } = await supabaseAdmin
+            .from('recipes')
+            .select(`
+                id, name,
+                recipe_ingredients (
+                    quantity,
+                    ingredient:ingredients (name)
+                )
+            `)
+            .eq('is_active', true);
+
+        if (recipeError) throw recipeError;
+
+        // 2. Get item costs from store_items
+        const { data: items, error: itemError } = await supabaseAdmin
+            .from('store_items')
+            .select('name, cost_per_unit, unit');
+
+        if (itemError) throw itemError;
+
+        // Map item costs for quick lookup (ensure lowercase matching)
+        const costMap = new Map<string, number>();
+        for (const item of items || []) {
+            costMap.set(item.name.toLowerCase(), item.cost_per_unit || 0);
+        }
+
+        // 3. Get recent sales for simple pricing check (last 30 days)
+        // Note: Ideally we'd sync current prices from Poster, but sales records give actual realized price
+        const { data: sales } = await supabaseAdmin
+            .from('sales_records')
+            .select('item_name, amount, quantity')
+            .order('timestamp', { ascending: false })
+            .limit(1000); // Sample recent sales
+
+        // Calculate average selling price per item
+        const priceMap = new Map<string, number>();
+        for (const sale of sales || []) {
+            if (!priceMap.has(sale.item_name)) {
+                const price = (parseFloat(sale.amount) / parseFloat(sale.quantity));
+                if (!isNaN(price) && price > 0) {
+                    priceMap.set(sale.item_name, price);
+                }
+            }
+        }
+
+        const report = [];
+
+        for (const recipe of recipes || []) {
+            let totalCost = 0;
+            const ingredientsList = [];
+
+            // Calculate recipe cost
+            for (const ri of (recipe.recipe_ingredients || []) as any[]) {
+                const ingName = ri.ingredient?.name;
+                const costPerUnit = costMap.get(ingName?.toLowerCase()) || 0;
+                const cost = costPerUnit * ri.quantity;
+
+                totalCost += cost;
+
+                ingredientsList.push({
+                    name: ingName,
+                    quantity: ri.quantity,
+                    costPerUnit,
+                    totalCost: cost
+                });
+            }
+
+            // Determine selling price (fallback to 0 if no sales found)
+            const sellingPrice = priceMap.get(recipe.name) || 0;
+            const margin = sellingPrice - totalCost;
+            const marginPercent = sellingPrice > 0 ? (margin / sellingPrice) * 100 : 0;
+
+            report.push({
+                id: recipe.id,
+                name: recipe.name,
+                category: 'Standard', // Placeholder, could map from Poster
+                price: Math.round(sellingPrice),
+                cost: Math.round(totalCost),
+                profit: Math.round(margin),
+                marginPercent: Math.round(marginPercent),
+                ingredients: ingredientsList
+            });
+        }
+
+        // Sort by lowest margin first to highlight issues
+        report.sort((a, b) => a.marginPercent - b.marginPercent);
+
+        res.json(report);
+
+    } catch (error: any) {
+        log(`Error generating profitability report: ${error.message}`);
+        res.status(500).json({ message: 'Failed to generate profitability report' });
+    }
+});
+
+
+// ============================================================================
 // SUPPLIER MANAGEMENT & ANALYTICS
 // ============================================================================
 

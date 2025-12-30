@@ -8,38 +8,38 @@ import { Switch } from "@/components/ui/switch";
 import { Link } from "wouter";
 import { ArrowLeft, TrendingUp, TrendingDown, DollarSign, Search, ChevronDown, ChevronUp, AlertCircle } from "lucide-react";
 
+import { secureFetch } from "@/lib/api";
+
 interface RecipeIngredient {
     name: string;
-    qty: number;
-    unit: string;
+    quantity: number; // Changed from qty
     costPerUnit: number;
-    lineCost: number;
+    totalCost: number; // Changed from lineCost
 }
 
 interface ProductProfitability {
-    id: number;
+    id: string | number;
     name: string;
     category: string;
     price: number;
     cost: number;
-    margin: number;
+    profit: number; // Changed from margin
     marginPercent: number;
-    recipe: RecipeIngredient[];
+    ingredients: RecipeIngredient[]; // Changed from recipe
 }
 
 export default function Profitability() {
     const [searchQuery, setSearchQuery] = useState("");
-    const [expandedId, setExpandedId] = useState<number | null>(null);
+    const [expandedId, setExpandedId] = useState<string | number | null>(null);
     const [showLowMarginOnly, setShowLowMarginOnly] = useState(false);
 
     const { data: products, isLoading } = useQuery<ProductProfitability[]>({
-        queryKey: ["/api/partner/profitability"],
+        queryKey: ["/api/partner/insights/profitability"],
         queryFn: async () => {
-            const res = await fetch("/api/partner/profitability", {
-                headers: { "x-app-pin": localStorage.getItem("app_pin") || "" } // Security
-            });
+            const res = await secureFetch("/api/partner/insights/profitability");
             if (!res.ok) throw new Error("Failed to fetch profitability data");
-            return res.json();
+            const data = await res.json();
+            return Array.isArray(data) ? data : [];
         },
     });
 
@@ -50,7 +50,7 @@ export default function Profitability() {
         return matchesSearch && matchesFilter;
     });
 
-    const toggleExpand = (id: number) => {
+    const toggleExpand = (id: string | number) => {
         setExpandedId(expandedId === id ? null : id);
     };
 
@@ -140,7 +140,7 @@ export default function Profitability() {
                                         <div className="flex items-center gap-6 w-full md:w-auto mt-4 md:mt-0 justify-between">
                                             <div className="text-right">
                                                 <p className="text-xs text-slate-500 uppercase font-bold">Profit</p>
-                                                <p className="text-lg font-bold text-white">KES {product.margin.toLocaleString()}</p>
+                                                <p className="text-lg font-bold text-white">KES {product.profit.toLocaleString()}</p>
                                             </div>
 
                                             <div className="w-24 text-right">
@@ -161,7 +161,7 @@ export default function Profitability() {
                                         <div className="border-t border-slate-700/50 bg-slate-900/30 p-4 md:p-6 animate-in slide-in-from-top-2">
                                             <h4 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4">Recipe Cost Breakdown</h4>
 
-                                            {product.recipe.length === 0 ? (
+                                            {product.ingredients.length === 0 ? (
                                                 <div className="flex items-center gap-2 text-amber-500/80 bg-amber-900/10 p-3 rounded-lg border border-amber-900/20">
                                                     <AlertCircle className="h-4 w-4" />
                                                     <p className="text-sm">No recipe ingredients found for this product. Cost is calculated as 0.</p>
@@ -178,12 +178,12 @@ export default function Profitability() {
                                                             </tr>
                                                         </thead>
                                                         <tbody className="divide-y divide-slate-800">
-                                                            {product.recipe.map((ing, idx) => (
+                                                            {product.ingredients.map((ing, idx) => (
                                                                 <tr key={idx} className="group hover:bg-slate-800/30">
                                                                     <td className="py-2 text-slate-300">{ing.name}</td>
-                                                                    <td className="py-2 text-right text-slate-400">{ing.qty} {ing.unit}</td>
+                                                                    <td className="py-2 text-right text-slate-400">{ing.quantity}</td>
                                                                     <td className="py-2 text-right text-slate-400">KES {ing.costPerUnit.toFixed(2)}</td>
-                                                                    <td className="py-2 text-right text-white font-medium">KES {ing.lineCost.toFixed(2)}</td>
+                                                                    <td className="py-2 text-right text-white font-medium">KES {ing.totalCost.toFixed(2)}</td>
                                                                 </tr>
                                                             ))}
                                                         </tbody>
