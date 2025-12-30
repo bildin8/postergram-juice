@@ -762,6 +762,130 @@ async function fallbackToAPIReplenishment(req: any, res: any, days: number, cove
     });
 }
 
+// ============================================================================
+// CONSUMPTION / USAGE REPORT (What ingredients were used)
+// ============================================================================
+
+router.get('/insights/consumption', async (req, res) => {
+    try {
+        // Date range
+        const days = parseInt(req.query.days as string) || 30;
+        const todaysDate = new Date();
+        const pastDate = new Date();
+
+        if (req.query.from && req.query.to) {
+            pastDate.setTime(new Date(req.query.from as string).getTime());
+            todaysDate.setTime(new Date(req.query.to as string).getTime());
+        } else {
+            pastDate.setDate(todaysDate.getDate() - days);
+        }
+
+        // 1. Get sales data
+        const { data: salesData, error: salesError } = await supabaseAdmin
+            .from('sales_records')
+            .select('item_name, quantity, timestamp, amount')
+            .gte('timestamp', pastDate.toISOString())
+            .lte('timestamp', todaysDate.toISOString())
+            .order('timestamp', { ascending: false });
+
+        if (salesError) {
+            log(`Error fetching sales: ${salesError.message}`);
+            return res.status(500).json({ message: 'Failed to fetch sales data' });
+        }
+
+        // 2. Aggregate product sales
+        const productSales = new Map<string, { qty: number; revenue: number; count: number }>();
+        for (const sale of salesData || []) {
+            const qty = parseFloat(sale.quantity) || 0;
+            const revenue = parseFloat(sale.amount) || 0;
+            const current = productSales.get(sale.item_name) || { qty: 0, revenue: 0, count: 0 };
+            current.qty += qty;
+            current.revenue += revenue;
+            current.count += 1;
+            productSales.set(sale.item_name, current);
+        }
+
+        // 3. Get recipes with ingredients
+        const { data: recipes } = await supabaseAdmin
+            .from('recipes')
+            .select(`
+                id, name, poster_product_id,
+                recipe_ingredients (
+                    ingredient_id, quantity, is_optional,
+                    ingredient:ingredients (id, name, default_unit_id)
+                )
+            `)
+            .eq('is_active', true);
+
+        // 4. Calculate ingredient consumption
+        const ingredientConsumption = new Map<string, {
+            name: string;
+            totalUsed: number;
+            usedByProducts: Array<{ product: string; qty: number }>;
+        }>();
+
+        for (const recipe of recipes || []) {
+            const sales = productSales.get(recipe.name);
+            if (!sales || sales.qty === 0) continue;
+
+            for (const ri of (recipe.recipe_ingredients || []) as any[]) {
+                if (ri.is_optional) continue;
+
+                const ingId = ri.ingredient_id;
+                const ingName = ri.ingredient?.name || 'Unknown';
+                const usageQty = sales.qty * (parseFloat(ri.quantity) || 0);
+
+                const current = ingredientConsumption.get(ingId) || {
+                    name: ingName,
+                    totalUsed: 0,
+                    usedByProducts: []
+                };
+                current.totalUsed += usageQty;
+                current.usedByProducts.push({ product: recipe.name, qty: usageQty });
+                ingredientConsumption.set(ingId, current);
+            }
+        }
+
+        // 5. Build response
+        const productReport = Array.from(productSales.entries()).map(([name, data]) => ({
+            name,
+            quantitySold: data.qty,
+            revenue: data.revenue,
+            transactionCount: data.count
+        })).sort((a, b) => b.quantitySold - a.quantitySold);
+
+        const ingredientReport = Array.from(ingredientConsumption.entries()).map(([id, data]) => ({
+            ingredientId: id,
+            name: data.name,
+            totalUsed: Math.round(data.totalUsed * 100) / 100,
+            usedByProducts: data.usedByProducts.map(p => ({
+                product: p.product,
+                qty: Math.round(p.qty * 100) / 100
+            }))
+        })).sort((a, b) => b.totalUsed - a.totalUsed);
+
+        res.json({
+            period: {
+                from: pastDate.toISOString().split('T')[0],
+                to: todaysDate.toISOString().split('T')[0],
+                days: Math.ceil((todaysDate.getTime() - pastDate.getTime()) / (1000 * 60 * 60 * 24))
+            },
+            summary: {
+                totalProducts: productReport.length,
+                totalIngredients: ingredientReport.length,
+                totalRevenue: productReport.reduce((s, p) => s + p.revenue, 0),
+                totalTransactions: salesData?.length || 0
+            },
+            products: productReport,
+            ingredients: ingredientReport
+        });
+
+    } catch (error: any) {
+        log(`Error generating consumption report: ${error.message}`);
+        res.status(500).json({ message: 'Failed to generate consumption report' });
+    }
+});
+
 
 // ============================================================================
 // SUPPLIER MANAGEMENT & ANALYTICS
