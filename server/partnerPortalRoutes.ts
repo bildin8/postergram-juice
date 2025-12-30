@@ -481,93 +481,138 @@ router.get('/profitability', async (req, res) => {
 });
 
 // ============================================================================
-// SMART REPLENISHMENT (Forecast based on past sales)
+// DATA SYNC ENDPOINTS (Sync from PosterPOS to local DB)
+// ============================================================================
+
+// Import the inventory service functions dynamically to avoid circular deps
+import { syncRecipesFromPoster, processHistoricalTransactions } from './inventoryService';
+
+// Sync recipes from PosterPOS to local database
+router.post('/sync/recipes', async (req, res) => {
+    try {
+        const result = await syncRecipesFromPoster();
+        res.json({
+            success: true,
+            message: 'Recipes synced from PosterPOS',
+            ...result
+        });
+    } catch (error: any) {
+        log(`Error syncing recipes: ${error.message}`);
+        res.status(500).json({ message: 'Failed to sync recipes' });
+    }
+});
+
+// Process historical transactions to populate ingredient_consumption table
+router.post('/sync/historical-transactions', async (req, res) => {
+    try {
+        const days = parseInt(req.body.days as string) || 30;
+        const result = await processHistoricalTransactions(days);
+        res.json({
+            success: true,
+            message: `Processed ${result.processed} transactions from the last ${days} days`,
+            ...result
+        });
+    } catch (error: any) {
+        log(`Error processing historical transactions: ${error.message}`);
+        res.status(500).json({ message: 'Failed to process transactions' });
+    }
+});
+
+// ============================================================================
+// SMART REPLENISHMENT (Forecast based on past sales - uses LOCAL synced data)
 // ============================================================================
 
 router.get('/insights/smart-replenishment', async (req, res) => {
     try {
-        if (!isPosterPOSInitialized()) {
-            return res.status(503).json({ message: "PosterPOS not configured" });
-        }
-        const client = getPosterPOSClient();
-
         // 1. Timeframe (Last 30 Days)
         const days = 30;
-        const coverageDays = 7; // Goal: Have 7 days of stock
+        const coverageDays = parseInt(req.query.coverage as string) || 7; // Goal: Have 7 days of stock
         const todaysDate = new Date();
         const pastDate = new Date();
         pastDate.setDate(todaysDate.getDate() - days);
 
-        const dateTo = todaysDate.toISOString().split('T')[0].replace(/-/g, '');
-        const dateFrom = pastDate.toISOString().split('T')[0].replace(/-/g, '');
+        // 2. Query LOCAL ingredient_consumption table (synced from PosterPOS transactions)
+        // This uses data we already have instead of calling PosterPOS API
+        const { data: consumptionData, error: consumptionError } = await supabaseAdmin
+            .from('ingredient_consumption')
+            .select(`
+                ingredient_id,
+                ingredient_name,
+                quantity_consumed,
+                sale_timestamp
+            `)
+            .gte('sale_timestamp', pastDate.toISOString())
+            .lte('sale_timestamp', todaysDate.toISOString());
 
-        // 2. Fetch Sales History (Transactions)
-        const transactions = await client.getTransactions({
-            dateFrom,
-            dateTo,
-            includeProducts: true,
-            status: 2 // Closed/Successful transactions only
-        });
-
-        // 3. Aggregate Product Sales
-        const productSales = new Map<string, number>(); // product_id -> total qty sold
-
-        for (const tx of transactions) {
-            if (tx.products) {
-                for (const p of tx.products) {
-                    const pid = p.product_id.toString();
-                    const qty = parseFloat(p.num || '0');
-                    productSales.set(pid, (productSales.get(pid) || 0) + qty);
-                }
-            }
+        if (consumptionError) {
+            log(`Error fetching consumption: ${consumptionError.message}`);
+            // Fallback: If local data not available, try PosterPOS API
+            return await fallbackToAPIReplenishment(req, res, days, coverageDays);
         }
 
-        // 4. Fetch Recipes (Product -> Ingredients)
-        const productsWithRecipes = await client.getAllProductsWithRecipes();
-
-        // 5. Calculate Ingredient Usage
+        // 3. Aggregate Ingredient Usage from local consumption data
         const ingredientUsage = new Map<string, {
+            id: string;
             name: string;
-            unit: string;
             used: number;
         }>();
 
-        for (const p of productsWithRecipes) {
-            const soldQty = productSales.get(p.product_id.toString()) || 0;
-            if (soldQty > 0 && p.ingredients) {
-                for (const ing of p.ingredients) {
-                    const ingId = ing.ingredient_id.toString();
-                    const usage = soldQty * ing.structure_netto;
+        for (const row of consumptionData || []) {
+            const ingId = row.ingredient_id;
+            const current = ingredientUsage.get(ingId) || {
+                id: ingId,
+                name: row.ingredient_name || 'Unknown',
+                used: 0
+            };
+            current.used += parseFloat(row.quantity_consumed as any) || 0;
+            ingredientUsage.set(ingId, current);
+        }
 
-                    const current = ingredientUsage.get(ingId) || {
-                        name: ing.ingredient_name,
-                        unit: ing.ingredient_unit,
-                        used: 0
-                    };
+        // 4. Get ingredient details (unit, current stock) from local tables
+        const ingredientIds = Array.from(ingredientUsage.keys());
 
-                    current.used += usage;
-                    ingredientUsage.set(ingId, current);
-                }
+        let ingredientDetails: Map<string, { unit: string; currentStock: number }> = new Map();
+
+        if (ingredientIds.length > 0) {
+            const { data: ingredients } = await supabaseAdmin
+                .from('ingredients')
+                .select(`
+                    id,
+                    name,
+                    default_unit:units_of_measure(abbreviation)
+                `)
+                .in('id', ingredientIds);
+
+            const { data: stockData } = await supabaseAdmin
+                .from('ingredient_stock')
+                .select('ingredient_id, current_stock')
+                .in('ingredient_id', ingredientIds);
+
+            // Build stock map
+            const stockMap = new Map((stockData || []).map(s => [s.ingredient_id, s.current_stock || 0]));
+
+            for (const ing of ingredients || []) {
+                ingredientDetails.set(ing.id, {
+                    unit: (ing.default_unit as any)?.abbreviation || 'units',
+                    currentStock: stockMap.get(ing.id) || 0
+                });
             }
         }
 
-        // 6. Fetch Current Stock Levels
-        const stockLevels = await client.getStockLevels();
-        const stockMap = new Map(stockLevels.map(s => [s.product_id.toString(), s.stock_count]));
-
-        // 7. Generate Forecast Report
+        // 5. Generate Forecast Report
         const report = [];
 
         for (const [ingId, data] of ingredientUsage.entries()) {
+            const details = ingredientDetails.get(ingId) || { unit: 'units', currentStock: 0 };
             const dailyAvg = data.used / days;
             const requiredStock = dailyAvg * coverageDays;
-            const currentStock = stockMap.get(ingId) || 0;
+            const currentStock = details.currentStock;
             const toOrder = Math.max(0, requiredStock - currentStock);
 
             report.push({
                 ingredientId: ingId,
                 name: data.name,
-                unit: data.unit,
+                unit: details.unit,
                 totalUsed30d: Math.round(data.used * 100) / 100,
                 dailyAvgUsage: Math.round(dailyAvg * 100) / 100,
                 currentStock: Math.round(currentStock * 100) / 100,
@@ -581,8 +626,13 @@ router.get('/insights/smart-replenishment', async (req, res) => {
         report.sort((a, b) => b.recommendedOrder - a.recommendedOrder);
 
         res.json({
-            period: { from: dateFrom, to: dateTo, days },
+            period: {
+                from: pastDate.toISOString().split('T')[0],
+                to: todaysDate.toISOString().split('T')[0],
+                days
+            },
             coverageTargetDays: coverageDays,
+            dataSource: 'local_db', // Indicates we used synced local data
             items: report
         });
 
@@ -591,6 +641,88 @@ router.get('/insights/smart-replenishment', async (req, res) => {
         res.status(500).json({ message: 'Failed to generate forecast' });
     }
 });
+
+// Fallback function if local consumption data doesn't exist yet
+async function fallbackToAPIReplenishment(req: any, res: any, days: number, coverageDays: number) {
+    if (!isPosterPOSInitialized()) {
+        return res.status(503).json({ message: "No local data and PosterPOS not configured" });
+    }
+    const client = getPosterPOSClient();
+
+    const todaysDate = new Date();
+    const pastDate = new Date();
+    pastDate.setDate(todaysDate.getDate() - days);
+
+    const dateTo = todaysDate.toISOString().split('T')[0].replace(/-/g, '');
+    const dateFrom = pastDate.toISOString().split('T')[0].replace(/-/g, '');
+
+    // Fetch from PosterPOS API
+    const transactions = await client.getTransactions({
+        dateFrom,
+        dateTo,
+        includeProducts: true,
+        status: 2
+    });
+
+    const productSales = new Map<string, number>();
+    for (const tx of transactions) {
+        if (tx.products) {
+            for (const p of tx.products) {
+                const pid = p.product_id.toString();
+                const qty = parseFloat(p.num || '0');
+                productSales.set(pid, (productSales.get(pid) || 0) + qty);
+            }
+        }
+    }
+
+    const productsWithRecipes = await client.getAllProductsWithRecipes();
+
+    const ingredientUsage = new Map<string, { name: string; unit: string; used: number }>();
+    for (const p of productsWithRecipes) {
+        const soldQty = productSales.get(p.product_id.toString()) || 0;
+        if (soldQty > 0 && p.ingredients) {
+            for (const ing of p.ingredients) {
+                const ingId = ing.ingredient_id.toString();
+                const usage = soldQty * ing.structure_netto;
+                const current = ingredientUsage.get(ingId) || { name: ing.ingredient_name, unit: ing.ingredient_unit, used: 0 };
+                current.used += usage;
+                ingredientUsage.set(ingId, current);
+            }
+        }
+    }
+
+    const stockLevels = await client.getStockLevels();
+    const stockMap = new Map(stockLevels.map(s => [s.product_id.toString(), s.stock_count]));
+
+    const report = [];
+    for (const [ingId, data] of ingredientUsage.entries()) {
+        const dailyAvg = data.used / days;
+        const requiredStock = dailyAvg * coverageDays;
+        const currentStock = stockMap.get(ingId) || 0;
+        const toOrder = Math.max(0, requiredStock - currentStock);
+
+        report.push({
+            ingredientId: ingId,
+            name: data.name,
+            unit: data.unit,
+            totalUsed30d: Math.round(data.used * 100) / 100,
+            dailyAvgUsage: Math.round(dailyAvg * 100) / 100,
+            currentStock: Math.round(currentStock * 100) / 100,
+            requiredForCoverage: Math.round(requiredStock * 100) / 100,
+            recommendedOrder: Math.round(toOrder * 100) / 100,
+            status: toOrder > 0 ? 'reorder' : 'ok'
+        });
+    }
+
+    report.sort((a, b) => b.recommendedOrder - a.recommendedOrder);
+
+    res.json({
+        period: { from: dateFrom, to: dateTo, days },
+        coverageTargetDays: coverageDays,
+        dataSource: 'posterpos_api', // Indicates we used live API (fallback)
+        items: report
+    });
+}
 
 
 // ============================================================================
