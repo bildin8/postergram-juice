@@ -849,5 +849,461 @@ router.post('/reorders/:id/receive', async (req: Request, res: Response) => {
     }
 });
 
+// ============================================================================
+// SETTINGS ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/op/settings
+ * Get all partner settings
+ */
+router.get('/settings', async (req: Request, res: Response) => {
+    try {
+        const { data, error } = await supabaseAdmin
+            .from('op_settings')
+            .select('*');
+
+        if (error) throw error;
+
+        // Convert to key-value object
+        const settings: Record<string, any> = {};
+        for (const row of data || []) {
+            settings[row.setting_key] = row.setting_value;
+        }
+
+        res.json(settings);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * PUT /api/op/settings/:key
+ * Update a specific setting
+ */
+router.put('/settings/:key', async (req: Request, res: Response) => {
+    try {
+        const { key } = req.params;
+        const { value, updatedBy } = req.body;
+
+        const { data, error } = await supabaseAdmin
+            .from('op_settings')
+            .update({
+                setting_value: value,
+                updated_at: new Date().toISOString(),
+                updated_by: updatedBy || 'Partner',
+            })
+            .eq('setting_key', key)
+            .select()
+            .single();
+
+        if (error) throw error;
+        if (!data) {
+            return res.status(404).json({ error: 'Setting not found' });
+        }
+
+        log(`Setting ${key} updated`, 'settings');
+        res.json(data);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================================================
+// STAFF AUTH ENDPOINTS
+// ============================================================================
+
+/**
+ * POST /api/op/auth/login
+ * Login with passphrase - returns staff info and role
+ */
+router.post('/auth/login', async (req: Request, res: Response) => {
+    try {
+        const { passphrase } = req.body;
+
+        if (!passphrase) {
+            return res.status(400).json({ error: 'Passphrase required' });
+        }
+
+        const { data, error } = await supabaseAdmin
+            .from('op_staff')
+            .select('*')
+            .eq('passphrase', passphrase.toLowerCase().trim())
+            .eq('is_active', true)
+            .single();
+
+        if (error || !data) {
+            return res.status(401).json({ error: 'Invalid passphrase' });
+        }
+
+        // Update last login
+        await supabaseAdmin
+            .from('op_staff')
+            .update({ last_login_at: new Date().toISOString() })
+            .eq('id', data.id);
+
+        log(`Staff ${data.name} logged in (${data.role})`, 'auth');
+
+        res.json({
+            id: data.id,
+            name: data.name,
+            role: data.role,
+            canApprove: data.can_approve,
+            approvalLimit: data.approval_limit,
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/op/staff
+ * List all staff (Partner only)
+ */
+router.get('/staff', async (req: Request, res: Response) => {
+    try {
+        const { data, error } = await supabaseAdmin
+            .from('op_staff')
+            .select('id, name, role, is_active, can_approve, approval_limit, last_login_at, created_at')
+            .order('role')
+            .order('name');
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/op/staff
+ * Create new staff member
+ */
+router.post('/staff', async (req: Request, res: Response) => {
+    try {
+        const { name, passphrase, role, canApprove, approvalLimit, createdBy } = req.body;
+
+        if (!name || !passphrase || !role) {
+            return res.status(400).json({ error: 'Name, passphrase, and role required' });
+        }
+
+        if (!['partner', 'store', 'shop'].includes(role)) {
+            return res.status(400).json({ error: 'Role must be partner, store, or shop' });
+        }
+
+        const { data, error } = await supabaseAdmin
+            .from('op_staff')
+            .insert({
+                name,
+                passphrase: passphrase.toLowerCase().trim(),
+                role,
+                can_approve: canApprove || false,
+                approval_limit: approvalLimit || 0,
+                created_by: createdBy || 'Partner',
+            })
+            .select()
+            .single();
+
+        if (error) {
+            if (error.code === '23505') {
+                return res.status(400).json({ error: 'Passphrase already in use' });
+            }
+            throw error;
+        }
+
+        log(`Staff ${name} created with role ${role}`, 'staff');
+        res.json(data);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * PUT /api/op/staff/:id
+ * Update staff member
+ */
+router.put('/staff/:id', async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { name, passphrase, role, isActive, canApprove, approvalLimit } = req.body;
+
+        const updates: Record<string, any> = {};
+        if (name !== undefined) updates.name = name;
+        if (passphrase !== undefined) updates.passphrase = passphrase.toLowerCase().trim();
+        if (role !== undefined) updates.role = role;
+        if (isActive !== undefined) updates.is_active = isActive;
+        if (canApprove !== undefined) updates.can_approve = canApprove;
+        if (approvalLimit !== undefined) updates.approval_limit = approvalLimit;
+
+        const { data, error } = await supabaseAdmin
+            .from('op_staff')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================================================
+// ALERTS ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/op/alerts
+ * Get alerts (optionally filter by acknowledged)
+ */
+router.get('/alerts', async (req: Request, res: Response) => {
+    try {
+        const { acknowledged } = req.query;
+
+        let query = supabaseAdmin
+            .from('op_alerts')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(50);
+
+        if (acknowledged === 'false') {
+            query = query.eq('acknowledged', false);
+        }
+
+        const { data, error } = await query;
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * POST /api/op/alerts/:id/acknowledge
+ * Acknowledge an alert
+ */
+router.post('/alerts/:id/acknowledge', async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { acknowledgedBy } = req.body;
+
+        const { data, error } = await supabaseAdmin
+            .from('op_alerts')
+            .update({
+                acknowledged: true,
+                acknowledged_by: acknowledgedBy || 'Partner',
+                acknowledged_at: new Date().toISOString(),
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ============================================================================
+// REPORTS ENDPOINTS
+// ============================================================================
+
+/**
+ * GET /api/op/reports/below-par
+ * Get items below PAR level
+ */
+router.get('/reports/below-par', async (req: Request, res: Response) => {
+    try {
+        const { data, error } = await supabaseAdmin
+            .from('v_op_below_par')
+            .select('*');
+
+        if (error) throw error;
+        res.json(data || []);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/op/reports/daily-summary
+ * Get daily summaries for historical analysis
+ */
+router.get('/reports/daily-summary', async (req: Request, res: Response) => {
+    try {
+        const { days = 14 } = req.query;
+        const daysNum = parseInt(days as string) || 14;
+
+        const fromDate = new Date();
+        fromDate.setDate(fromDate.getDate() - daysNum);
+
+        const { data, error } = await supabaseAdmin
+            .from('op_daily_summary')
+            .select('*')
+            .gte('summary_date', fromDate.toISOString().split('T')[0])
+            .order('summary_date', { ascending: false });
+
+        if (error) throw error;
+        res.json(data || []);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/op/reports/consumption-trends
+ * Get consumption trends over time
+ */
+router.get('/reports/consumption-trends', async (req: Request, res: Response) => {
+    try {
+        const { days = 7 } = req.query;
+        const daysNum = parseInt(days as string) || 7;
+
+        const fromDate = new Date();
+        fromDate.setDate(fromDate.getDate() - daysNum);
+
+        // Get daily consumption by ingredient
+        const { data, error } = await supabaseAdmin
+            .from('op_calculated_consumption')
+            .select(`
+                consumption_date,
+                ingredient_id,
+                op_ingredients(name, unit),
+                quantity_consumed
+            `)
+            .gte('consumption_date', fromDate.toISOString().split('T')[0])
+            .order('consumption_date', { ascending: true });
+
+        if (error) throw error;
+
+        // Aggregate by ingredient per day
+        const trends: Record<string, Record<string, number>> = {};
+        for (const row of data || []) {
+            const ingredient = (row as any).op_ingredients?.name || 'Unknown';
+            const date = row.consumption_date;
+            if (!trends[ingredient]) trends[ingredient] = {};
+            trends[ingredient][date] = (trends[ingredient][date] || 0) + (row.quantity_consumed || 0);
+        }
+
+        res.json(trends);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/op/reports/top-sellers
+ * Get top selling products
+ */
+router.get('/reports/top-sellers', async (req: Request, res: Response) => {
+    try {
+        const { days = 7 } = req.query;
+        const daysNum = parseInt(days as string) || 7;
+
+        const fromDate = new Date();
+        fromDate.setDate(fromDate.getDate() - daysNum);
+
+        // Get sales from synced transactions
+        const { data, error } = await supabaseAdmin
+            .from('op_synced_transactions')
+            .select('products')
+            .gte('transaction_date', fromDate.toISOString());
+
+        if (error) throw error;
+
+        // Aggregate products
+        const productSales: Record<string, { name: string; quantity: number; revenue: number }> = {};
+        for (const tx of data || []) {
+            for (const product of tx.products || []) {
+                const key = product.product_id || product.name;
+                if (!productSales[key]) {
+                    productSales[key] = { name: product.name || 'Unknown', quantity: 0, revenue: 0 };
+                }
+                productSales[key].quantity += product.count || 1;
+                productSales[key].revenue += (product.price || 0) * (product.count || 1);
+            }
+        }
+
+        // Sort by revenue
+        const sorted = Object.values(productSales)
+            .sort((a, b) => b.revenue - a.revenue)
+            .slice(0, 20);
+
+        res.json(sorted);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * GET /api/op/reports/variance-history
+ * Get historical variance data
+ */
+router.get('/reports/variance-history', async (req: Request, res: Response) => {
+    try {
+        const { days = 14 } = req.query;
+        const daysNum = parseInt(days as string) || 14;
+
+        const fromDate = new Date();
+        fromDate.setDate(fromDate.getDate() - daysNum);
+
+        const { data, error } = await supabaseAdmin
+            .from('op_daily_reconciliation')
+            .select(`
+                reconciliation_date,
+                total_expected_consumption,
+                total_variance,
+                op_reconciliation_items(
+                    op_ingredients(name),
+                    expected_consumption,
+                    actual_consumption,
+                    variance_quantity
+                )
+            `)
+            .gte('reconciliation_date', fromDate.toISOString().split('T')[0])
+            .order('reconciliation_date', { ascending: false });
+
+        if (error) throw error;
+        res.json(data || []);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * PUT /api/op/ingredients/:id/par
+ * Update PAR levels for an ingredient
+ */
+router.put('/ingredients/:id/par', async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { parLevel, safetyStock, maxStock, leadTimeDays, preferredSupplier } = req.body;
+
+        const updates: Record<string, any> = {};
+        if (parLevel !== undefined) updates.par_level = parLevel;
+        if (safetyStock !== undefined) updates.safety_stock = safetyStock;
+        if (maxStock !== undefined) updates.max_stock = maxStock;
+        if (leadTimeDays !== undefined) updates.lead_time_days = leadTimeDays;
+        if (preferredSupplier !== undefined) updates.preferred_supplier = preferredSupplier;
+
+        const { data, error } = await supabaseAdmin
+            .from('op_ingredients')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        log(`Updated PAR levels for ingredient ${id}`, 'ingredients');
+        res.json(data);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 export default router;
 
