@@ -20,7 +20,9 @@ import storePortalRoutes from "./storePortalRoutes";
 import shopPortalRoutes from "./shopPortalRoutes";
 import partnerPortalRoutes from "./partnerPortalRoutes";
 import insightsRoutes from "./insightsRoutes";
+import opRoutes from "./opRoutes";  // New consolidated operational routes
 import { requirePartnerAuth } from "./authMiddleware";
+import { startSalesSync } from "./salesSyncService";  // New sync service
 
 export async function registerRoutes(
   httpServer: Server,
@@ -84,6 +86,15 @@ export async function registerRoutes(
   app.use("/api/store", storePortalRoutes);
   app.use("/api/shop", shopPortalRoutes);
   app.use("/api/insights", insightsRoutes);
+
+  // New consolidated operational routes (op_ schema)
+  app.use("/api/op", opRoutes);
+
+  // Start new sales sync service (uses op_ tables)
+  if (posterEndpoint && posterToken) {
+    startSalesSync();
+    log('New sales sync service started (5-minute interval)');
+  }
 
   // ============ M-PESA STK PUSH ROUTES ============
 
