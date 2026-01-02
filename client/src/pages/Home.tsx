@@ -6,9 +6,18 @@ import { Badge } from "@/components/ui/badge";
 export default function Home() {
   const apps = [
     {
+      id: "power",
+      name: "⚡ Power Dashboard",
+      description: "Live sales, usage & stock analytics",
+      initial: "⚡",
+      color: "bg-gradient-to-br from-yellow-500 to-orange-600",
+      route: "/partner/power",
+      notifications: 0,
+    },
+    {
       id: "partner",
       name: "Partner Portal",
-      description: "Full visibility & approvals",
+      description: "Oversight, approvals & reconciliation",
       initial: "PA",
       color: "bg-indigo-500",
       route: "/partner",
@@ -30,15 +39,6 @@ export default function Home() {
       initial: "SH",
       color: "bg-orange-500",
       route: "/shop",
-      notifications: 0,
-    },
-    {
-      id: "owner",
-      name: "Owner Dashboard",
-      description: "Sales analytics (legacy)",
-      initial: "OW",
-      color: "bg-blue-500",
-      route: "/owner",
       notifications: 0,
     },
     {

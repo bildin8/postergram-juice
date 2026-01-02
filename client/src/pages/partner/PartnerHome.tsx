@@ -94,6 +94,14 @@ export default function PartnerHome() {
 
     const modules = [
         {
+            title: "⚡ Power Dashboard",
+            description: "Live sales, consumption, and stock analytics",
+            icon: TrendingUp,
+            href: "/partner/power",
+            color: "bg-gradient-to-br from-yellow-500 to-orange-600",
+            featured: true,
+        },
+        {
             title: "Approvals Inbox",
             description: "Purchase & replenishment requests",
             icon: CheckCircle,
@@ -120,43 +128,19 @@ export default function PartnerHome() {
             color: "bg-emerald-600",
         },
         {
+            title: "Stock Takes",
+            description: "View stock sessions & configure",
+            icon: ClipboardList,
+            href: "/partner/stock-takes",
+            color: "bg-teal-600",
+        },
+        {
             title: "Staff",
             description: "Manage team & view activity",
             icon: Users,
             href: "/partner/staff",
             color: "bg-orange-600",
         },
-        {
-            title: "Alerts",
-            description: "Issues requiring attention",
-            icon: Bell,
-            href: "/partner/alerts",
-            count: alertCount,
-            highlight: alertCount > 0,
-            color: alertCount > 0 ? "bg-red-600" : "bg-slate-600",
-        },
-        {
-            title: "Insights & Analytics",
-            description: "PAR suggestions, sales & trends",
-            icon: TrendingUp,
-            href: "/partner/insights",
-            color: "bg-cyan-600",
-        },
-        {
-            title: "Profitability Engine",
-            description: "Analyze margins & recipe costs",
-            icon: PieChart,
-            href: "/partner/profitability",
-            color: "bg-indigo-600",
-        },
-        {
-            title: "Smart Replenishment",
-            description: "AI reorder suggestions from sales",
-            icon: TrendingUp,
-            href: "/partner/smart-replenishment",
-            color: "bg-violet-600",
-        },
-
         {
             title: "Items Management",
             description: "Manage shop & store items",
@@ -165,19 +149,11 @@ export default function PartnerHome() {
             color: "bg-pink-600",
         },
         {
-            title: "Suppliers",
-            description: "Database & price analytics",
+            title: "Local Buys",
+            description: "Track petty cash & local purchases",
             icon: Truck,
-            href: "/partner/suppliers",
-            color: "bg-blue-800",
-        },
-
-        {
-            title: "Stock Takes",
-            description: "View stock sessions & configure",
-            icon: ClipboardList,
-            href: "/partner/stock-takes",
-            color: "bg-teal-600",
+            href: "/partner/local-buys",
+            color: "bg-indigo-600",
         },
     ];
 
