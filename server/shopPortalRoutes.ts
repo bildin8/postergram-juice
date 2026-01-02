@@ -380,10 +380,20 @@ router.post('/expenses/with-shift', requireOpenShift, async (req, res) => {
         const data = schema.parse(req.body);
         const shiftId = (req as any).currentShiftId;
 
-        // Internal Control: Mandatory Evidence > 1000
-        if (data.amount > 1000 && !data.evidenceUrl) {
+        // 1. Fetch Financial Controls
+        const { data: settings } = await supabaseAdmin
+            .from('op_settings')
+            .select('setting_value')
+            .eq('setting_key', 'financial_controls')
+            .single();
+
+        const finControls = settings?.setting_value || {};
+        const threshold = finControls.receipt_required_threshold || 1000;
+
+        // Internal Control: Mandatory Evidence > threshold
+        if (data.amount > threshold && !data.evidenceUrl) {
             return res.status(400).json({
-                message: 'Mandatory Receipt Evidence required for amounts over KES 1,000'
+                message: `Mandatory Receipt Evidence required for amounts over KES ${threshold.toLocaleString()}`
             });
         }
 

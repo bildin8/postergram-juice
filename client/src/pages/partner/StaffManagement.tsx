@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
     Select,
     SelectContent,
@@ -18,20 +19,24 @@ import {
     Users,
     Plus,
     Pencil,
-    Trash2,
-    Phone,
+    Key,
+    Shield,
     MessageCircle,
-    X
+    X,
+    Lock
 } from "lucide-react";
 import { Link } from "wouter";
 
 interface Staff {
     id: string;
     name: string;
-    role: string;
-    telegram_user_id?: string;
-    phone?: string;
+    role: "partner" | "store" | "shop";
+    passphrase: string;
     is_active: boolean;
+    can_approve: boolean;
+    approval_limit: number;
+    telegram_chat_id?: string;
+    last_login_at?: string;
     created_at: string;
 }
 
@@ -43,26 +48,28 @@ export default function StaffManagement() {
     const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
     const [formData, setFormData] = useState({
         name: "",
-        role: "shop",
-        phone: "",
-        telegram_user_id: "",
+        role: "shop" as "partner" | "store" | "shop",
+        passphrase: "",
+        canApprove: false,
+        approvalLimit: 0,
+        telegram_chat_id: "",
     });
 
-    // Fetch staff
+    // Fetch staff from new op endpoint
     const { data: staff, isLoading } = useQuery<Staff[]>({
-        queryKey: ["/api/partner/staff"],
+        queryKey: ["/api/op/staff"],
         queryFn: async () => {
-            const res = await fetch("/api/partner/staff");
+            const res = await fetch("/api/op/staff");
             return res.json();
         },
     });
 
-    // Create/Update mutation
+    // Create/Update mutation using new op endpoints
     const saveMutation = useMutation({
-        mutationFn: async (data: typeof formData & { id?: string }) => {
+        mutationFn: async (data: any) => {
             const url = data.id
-                ? `/api/partner/staff/${data.id}`
-                : "/api/partner/staff";
+                ? `/api/op/staff/${data.id}`
+                : "/api/op/staff";
             const method = data.id ? "PUT" : "POST";
 
             const res = await fetch(url, {
@@ -73,31 +80,15 @@ export default function StaffManagement() {
 
             if (!res.ok) {
                 const error = await res.json();
-                throw new Error(error.message || "Failed to save staff");
+                throw new Error(error.error || "Failed to save staff");
             }
 
             return res.json();
         },
         onSuccess: () => {
             toast({ title: "Saved", description: "Staff member saved successfully." });
-            queryClient.invalidateQueries({ queryKey: ["/api/partner/staff"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/op/staff"] });
             resetForm();
-        },
-        onError: (error: Error) => {
-            toast({ title: "Error", description: error.message, variant: "destructive" });
-        },
-    });
-
-    // Delete mutation
-    const deleteMutation = useMutation({
-        mutationFn: async (id: string) => {
-            const res = await fetch(`/api/partner/staff/${id}`, { method: "DELETE" });
-            if (!res.ok) throw new Error("Failed to delete");
-            return res.json();
-        },
-        onSuccess: () => {
-            toast({ title: "Deleted", description: "Staff member removed." });
-            queryClient.invalidateQueries({ queryKey: ["/api/partner/staff"] });
         },
         onError: (error: Error) => {
             toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -107,7 +98,14 @@ export default function StaffManagement() {
     const resetForm = () => {
         setShowForm(false);
         setEditingStaff(null);
-        setFormData({ name: "", role: "shop", phone: "", telegram_user_id: "" });
+        setFormData({
+            name: "",
+            role: "shop",
+            passphrase: "",
+            canApprove: false,
+            approvalLimit: 0,
+            telegram_chat_id: ""
+        });
     };
 
     const handleEdit = (s: Staff) => {
@@ -115,8 +113,10 @@ export default function StaffManagement() {
         setFormData({
             name: s.name,
             role: s.role,
-            phone: s.phone || "",
-            telegram_user_id: s.telegram_user_id || "",
+            passphrase: s.passphrase || "",
+            canApprove: s.can_approve,
+            approvalLimit: s.approval_limit || 0,
+            telegram_chat_id: s.telegram_chat_id || "",
         });
         setShowForm(true);
     };
@@ -125,6 +125,10 @@ export default function StaffManagement() {
         e.preventDefault();
         if (!formData.name.trim()) {
             toast({ title: "Error", description: "Name is required", variant: "destructive" });
+            return;
+        }
+        if (!formData.passphrase.trim()) {
+            toast({ title: "Error", description: "Passphrase is required", variant: "destructive" });
             return;
         }
         saveMutation.mutate({ ...formData, id: editingStaff?.id });
@@ -166,8 +170,13 @@ export default function StaffManagement() {
                                 Back to Partner
                             </Button>
                         </Link>
-                        <h1 className="text-2xl font-bold text-white mb-2">Staff Management</h1>
-                        <p className="text-slate-400">{staff?.length || 0} team members</p>
+                        <div className="flex items-center gap-3">
+                            <h1 className="text-2xl font-bold text-white">Staff & Access</h1>
+                            <Badge variant="outline" className="border-indigo-500 text-indigo-400">
+                                Passphrase Auth Active
+                            </Badge>
+                        </div>
+                        <p className="text-slate-400">{staff?.length || 0} secure access accounts</p>
                     </div>
                     <Button
                         className="bg-indigo-600 hover:bg-indigo-700"
@@ -180,73 +189,110 @@ export default function StaffManagement() {
 
                 {/* Add/Edit Form */}
                 {showForm && (
-                    <Card className="bg-slate-800/50 border-slate-700 mb-6">
-                        <CardHeader>
+                    <Card className="bg-slate-800/50 border-slate-700 mb-6 shadow-xl">
+                        <CardHeader className="border-b border-slate-700/50">
                             <div className="flex items-center justify-between">
-                                <CardTitle className="text-white">
-                                    {editingStaff ? "Edit Staff" : "Add New Staff"}
+                                <CardTitle className="text-white flex items-center gap-2">
+                                    <Lock className="h-5 w-5 text-indigo-400" />
+                                    {editingStaff ? "Edit Staff Access" : "Create Secure Access"}
                                 </CardTitle>
-                                <Button variant="ghost" size="sm" onClick={resetForm}>
+                                <Button variant="ghost" size="sm" onClick={resetForm} className="text-slate-400">
                                     <X className="h-4 w-4" />
                                 </Button>
                             </div>
                         </CardHeader>
-                        <CardContent>
-                            <form onSubmit={handleSubmit} className="space-y-4">
-                                <div className="grid grid-cols-2 gap-4">
+                        <CardContent className="pt-6">
+                            <form onSubmit={handleSubmit} className="space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                     <div className="space-y-2">
-                                        <Label className="text-slate-300">Name *</Label>
+                                        <Label className="text-slate-300">Display Name *</Label>
                                         <Input
                                             value={formData.name}
                                             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                                             placeholder="Staff name"
-                                            className="bg-slate-900 border-slate-600 text-white"
+                                            className="bg-slate-900 border-slate-600 text-white focus:ring-indigo-500"
                                         />
                                     </div>
                                     <div className="space-y-2">
-                                        <Label className="text-slate-300">Role *</Label>
+                                        <Label className="text-slate-300">Operational Role *</Label>
                                         <Select
                                             value={formData.role}
-                                            onValueChange={(v) => setFormData({ ...formData, role: v })}
+                                            onValueChange={(v: any) => setFormData({ ...formData, role: v })}
                                         >
                                             <SelectTrigger className="bg-slate-900 border-slate-600 text-white">
                                                 <SelectValue />
                                             </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="shop">Shop Staff</SelectItem>
-                                                <SelectItem value="store">Store Staff</SelectItem>
-                                                <SelectItem value="partner">Partner</SelectItem>
+                                            <SelectContent className="bg-slate-800 border-slate-700 text-white">
+                                                <SelectItem value="shop">Shop (Daily Operations)</SelectItem>
+                                                <SelectItem value="store">Store (Inventory Mgmt)</SelectItem>
+                                                <SelectItem value="partner">Partner (Full Control)</SelectItem>
                                             </SelectContent>
                                         </Select>
                                     </div>
                                     <div className="space-y-2">
-                                        <Label className="text-slate-300">Phone</Label>
+                                        <Label className="text-slate-300 flex items-center gap-2">
+                                            <Key className="h-3 w-3" /> Login Passphrase *
+                                        </Label>
                                         <Input
-                                            value={formData.phone}
-                                            onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                                            placeholder="+254..."
-                                            className="bg-slate-900 border-slate-600 text-white"
+                                            value={formData.passphrase}
+                                            onChange={(e) => setFormData({ ...formData, passphrase: e.target.value })}
+                                            placeholder="e.g. mango-sunrise-2024"
+                                            className="bg-slate-900 border-slate-600 text-white font-mono"
                                         />
+                                        <p className="text-[10px] text-slate-500">Staff will type this to login. Keep it unique.</p>
                                     </div>
                                     <div className="space-y-2">
-                                        <Label className="text-slate-300">Telegram ID</Label>
+                                        <Label className="text-slate-300">Telegram Chat ID (Optional)</Label>
                                         <Input
-                                            value={formData.telegram_user_id}
-                                            onChange={(e) => setFormData({ ...formData, telegram_user_id: e.target.value })}
-                                            placeholder="For notifications"
+                                            value={formData.telegram_chat_id}
+                                            onChange={(e) => setFormData({ ...formData, telegram_chat_id: e.target.value })}
+                                            placeholder="For direct alerts"
                                             className="bg-slate-900 border-slate-600 text-white"
                                         />
                                     </div>
                                 </div>
-                                <div className="flex gap-3">
+
+                                <div className="p-4 bg-indigo-900/20 border border-indigo-500/30 rounded-lg space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <Shield className="h-4 w-4 text-indigo-400" />
+                                            <div>
+                                                <Label className="text-white">Approval Authority</Label>
+                                                <p className="text-xs text-slate-400">Can this staff approve requests?</p>
+                                            </div>
+                                        </div>
+                                        <Switch
+                                            checked={formData.canApprove}
+                                            onCheckedChange={(v) => setFormData({ ...formData, canApprove: v })}
+                                        />
+                                    </div>
+
+                                    {formData.canApprove && (
+                                        <div className="pt-2">
+                                            <Label className="text-slate-300 mb-1 block">Max Approval Limit (KES)</Label>
+                                            <div className="relative">
+                                                <span className="absolute left-3 top-2.5 text-slate-500 text-sm">KES</span>
+                                                <Input
+                                                    type="number"
+                                                    value={formData.approvalLimit}
+                                                    onChange={(e) => setFormData({ ...formData, approvalLimit: parseInt(e.target.value) || 0 })}
+                                                    className="bg-slate-900 border-slate-600 text-white pl-12"
+                                                />
+                                            </div>
+                                            <p className="text-[10px] text-slate-500 mt-1">Leave 0 or empty for Role-based defaults.</p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="flex gap-3 pt-2">
                                     <Button
                                         type="submit"
-                                        className="bg-emerald-600 hover:bg-emerald-700"
+                                        className="bg-indigo-600 hover:bg-indigo-700 flex-1"
                                         disabled={saveMutation.isPending}
                                     >
-                                        {saveMutation.isPending ? "Saving..." : "Save Staff"}
+                                        {saveMutation.isPending ? "Saving..." : "Grant Access"}
                                     </Button>
-                                    <Button type="button" variant="outline" onClick={resetForm}>
+                                    <Button type="button" variant="outline" onClick={resetForm} className="border-slate-600 text-slate-300 hover:bg-slate-700">
                                         Cancel
                                     </Button>
                                 </div>
@@ -258,69 +304,78 @@ export default function StaffManagement() {
                 {/* Loading */}
                 {isLoading && (
                     <div className="text-center py-12">
-                        <p className="text-slate-400">Loading staff...</p>
+                        <div className="animate-spin h-8 w-8 border-4 border-indigo-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+                        <p className="text-slate-400">Validating operational team...</p>
                     </div>
                 )}
 
                 {/* Staff by Role */}
                 {Object.entries(groupedStaff).map(([role, members]) => (
                     members.length > 0 && (
-                        <div key={role} className="mb-6">
-                            <h2 className="text-lg font-medium text-white mb-3 flex items-center gap-2">
-                                <Badge className={getRoleColor(role)}>{getRoleLabel(role)}</Badge>
-                                <span className="text-slate-400 text-sm">({members.length})</span>
+                        <div key={role} className="mb-8">
+                            <h2 className="text-lg font-medium text-white mb-4 flex items-center gap-2">
+                                <Badge className={`${getRoleColor(role)} px-3 py-1`}>{getRoleLabel(role)}</Badge>
+                                <span className="text-slate-500 text-sm font-normal">| {members.length} member(s)</span>
                             </h2>
-                            <div className="space-y-3">
+                            <div className="grid grid-cols-1 gap-4">
                                 {members.map((s) => (
-                                    <Card key={s.id} className="bg-slate-800/50 border-slate-700">
+                                    <Card key={s.id} className="bg-slate-800/40 border-slate-700/50 hover:bg-slate-800/60 transition-colors">
                                         <CardContent className="py-4">
                                             <div className="flex items-center justify-between">
                                                 <div className="flex items-center gap-4">
-                                                    <div className={`w-12 h-12 rounded-full flex items-center justify-center ${getRoleColor(s.role)}`}>
-                                                        <span className="text-white font-bold text-lg">
+                                                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${getRoleColor(s.role)} shadow-lg`}>
+                                                        <span className="text-white font-bold text-xl">
                                                             {s.name.charAt(0).toUpperCase()}
                                                         </span>
                                                     </div>
                                                     <div>
-                                                        <p className="text-white font-medium">{s.name}</p>
-                                                        <div className="flex items-center gap-3 text-sm text-slate-400">
-                                                            {s.phone && (
-                                                                <span className="flex items-center gap-1">
-                                                                    <Phone className="h-3 w-3" /> {s.phone}
+                                                        <div className="flex items-center gap-2">
+                                                            <p className="text-white font-semibold text-lg">{s.name}</p>
+                                                            {s.can_approve && (
+                                                                <Badge variant="outline" className="text-[10px] h-5 border-emerald-500/50 text-emerald-400 bg-emerald-500/5">
+                                                                    Approver
+                                                                </Badge>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center gap-4 text-xs text-slate-400 mt-1">
+                                                            <span className="flex items-center gap-1 font-mono text-indigo-400">
+                                                                <Key className="h-3 w-3" /> {s.passphrase}
+                                                            </span>
+                                                            {s.approval_limit > 0 && (
+                                                                <span className="flex items-center gap-1 border-l border-slate-700 pl-4">
+                                                                    Up to KES {s.approval_limit.toLocaleString()}
                                                                 </span>
                                                             )}
-                                                            {s.telegram_user_id && (
-                                                                <span className="flex items-center gap-1">
-                                                                    <MessageCircle className="h-3 w-3" /> Linked
+                                                            {s.last_login_at && (
+                                                                <span className="flex items-center gap-1 border-l border-slate-700 pl-4">
+                                                                    Last seen {new Date(s.last_login_at).toLocaleDateString()}
                                                                 </span>
                                                             )}
                                                         </div>
                                                     </div>
                                                 </div>
-                                                <div className="flex items-center gap-2">
-                                                    {!s.is_active && (
-                                                        <Badge variant="outline" className="border-red-600 text-red-400">
-                                                            Inactive
-                                                        </Badge>
-                                                    )}
+                                                <div className="flex items-center gap-1">
                                                     <Button
                                                         variant="ghost"
-                                                        size="sm"
+                                                        size="icon"
+                                                        className="h-9 w-9 text-slate-400 hover:text-white hover:bg-slate-700/50"
                                                         onClick={() => handleEdit(s)}
                                                     >
                                                         <Pencil className="h-4 w-4" />
                                                     </Button>
                                                     <Button
                                                         variant="ghost"
-                                                        size="sm"
-                                                        className="text-red-400 hover:text-red-300"
+                                                        size="icon"
+                                                        className="h-9 w-9 text-red-400/70 hover:text-red-400 hover:bg-red-400/10"
                                                         onClick={() => {
-                                                            if (confirm(`Delete ${s.name}?`)) {
-                                                                deleteMutation.mutate(s.id);
+                                                            if (confirm(`Revoke access for ${s.name}?`)) {
+                                                                // Note: We don't have a specific DELETE endpoint in opRoutes yet
+                                                                // but we can de-activate or use existing partner portal delete if shared
+                                                                toast({ title: "Note", description: "Use Edit to deactivate staff." });
                                                             }
                                                         }}
                                                     >
-                                                        <Trash2 className="h-4 w-4" />
+                                                        <Shield className="h-4 w-4" />
                                                     </Button>
                                                 </div>
                                             </div>
@@ -334,17 +389,17 @@ export default function StaffManagement() {
 
                 {/* Empty State */}
                 {!isLoading && (!staff || staff.length === 0) && (
-                    <Card className="bg-slate-800/30 border-slate-700">
-                        <CardContent className="py-12 text-center">
-                            <Users className="h-16 w-16 text-slate-600 mx-auto mb-4" />
-                            <h2 className="text-xl font-bold text-white mb-2">No Staff Yet</h2>
-                            <p className="text-slate-400 mb-4">Add your team members to get started.</p>
+                    <Card className="bg-slate-800/30 border-slate-700 border-dashed border-2">
+                        <CardContent className="py-16 text-center">
+                            <Lock className="h-20 w-20 text-slate-700 mx-auto mb-4" />
+                            <h2 className="text-xl font-bold text-white mb-2">Secure Your Operation</h2>
+                            <p className="text-slate-400 mb-8 max-w-sm mx-auto">Create staff profiles with specific passphrases to enable tracking and approvals.</p>
                             <Button
-                                className="bg-indigo-600 hover:bg-indigo-700"
+                                className="bg-indigo-600 hover:bg-indigo-700 h-12 px-8 text-lg font-semibold"
                                 onClick={() => setShowForm(true)}
                             >
-                                <Plus className="h-4 w-4 mr-2" />
-                                Add First Staff Member
+                                <Plus className="h-5 w-5 mr-2" />
+                                Create First Access Account
                             </Button>
                         </CardContent>
                     </Card>

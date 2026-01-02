@@ -21,6 +21,7 @@ import CashReconciliation from "@/pages/partner/CashReconciliation";
 import Items from "@/pages/partner/Items";
 import LocalBuys from "@/pages/partner/LocalBuys";
 import PowerDashboard from "@/pages/partner/PowerDashboard";
+import PartnerSettings from "@/pages/partner/PartnerSettings";
 
 // Store Portal
 import StoreHome from "@/pages/store/StoreHome";
@@ -94,6 +95,7 @@ function Router() {
       <Route path="/partner/staff" component={StaffManagement} />
       <Route path="/partner/items" component={Items} />
       <Route path="/partner/local-buys" component={LocalBuys} />
+      <Route path="/partner/settings" component={PartnerSettings} />
 
       {/* ================================================================ */}
       {/* LEGACY OWNER ROUTES - Redirect to Partner Portal                */}

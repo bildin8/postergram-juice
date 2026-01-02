@@ -17,7 +17,8 @@ import {
     calculateCashReconciliation,
     getReconciliationSummary,
     getVarianceSummary,
-    acknowledgeReconciliation
+    acknowledgeReconciliation,
+    generateDailySummary
 } from './reconciliationService';
 import { log } from './index';
 
@@ -383,7 +384,7 @@ router.get('/shifts/current', async (req: Request, res: Response) => {
 
 /**
  * POST /api/op/shifts/open
- * Open a new shift
+ * Open a new shift with control checks
  */
 router.post('/shifts/open', async (req: Request, res: Response) => {
     try {
@@ -391,6 +392,23 @@ router.post('/shifts/open', async (req: Request, res: Response) => {
 
         if (!openedBy || openingFloat === undefined) {
             return res.status(400).json({ error: 'openedBy and openingFloat are required' });
+        }
+
+        // 1. Fetch Shift Controls
+        const { data: settings } = await supabaseAdmin
+            .from('op_settings')
+            .select('setting_value')
+            .eq('setting_key', 'shift_controls')
+            .single();
+
+        const controls = settings?.setting_value || {};
+
+        // 2. Enforce Opening Count if required
+        if (controls.require_opening_count && !openingStockCountId) {
+            return res.status(400).json({
+                error: 'Partner requires an opening stock count to start a shift.',
+                code: 'COUNT_REQUIRED'
+            });
         }
 
         // Check if there's already an open shift
@@ -424,15 +442,40 @@ router.post('/shifts/open', async (req: Request, res: Response) => {
 
 /**
  * POST /api/op/shifts/:id/close
- * Close a shift with cash reconciliation
+ * Close a shift with cash reconciliation and control enforcement
  */
 router.post('/shifts/:id/close', async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
-        const { closedBy, closingCash, closingStockCountId } = req.body;
+        const { closedBy, closingCash, closingStockCountId, cashDeclared } = req.body;
 
         if (!closedBy || closingCash === undefined) {
             return res.status(400).json({ error: 'closedBy and closingCash are required' });
+        }
+
+        // 1. Fetch Controls
+        const { data: settings } = await supabaseAdmin
+            .from('op_settings')
+            .select('setting_value')
+            .eq('setting_key', 'shift_controls')
+            .single();
+
+        const controls = settings?.setting_value || {};
+
+        // 2. Enforce Closing Count
+        if (controls.require_closing_count && !closingStockCountId) {
+            return res.status(400).json({
+                error: 'Partner requires a closing stock count for shift reconciliation.',
+                code: 'COUNT_REQUIRED'
+            });
+        }
+
+        // 3. Enforce Cash Declaration
+        if (controls.require_cash_declaration && cashDeclared === undefined) {
+            return res.status(400).json({
+                error: 'Partner requires a manual cash declaration before closing.',
+                code: 'DECLARATION_REQUIRED'
+            });
         }
 
         // Update shift
@@ -440,7 +483,8 @@ router.post('/shifts/:id/close', async (req: Request, res: Response) => {
             .from('op_shifts')
             .update({
                 closed_by: closedBy,
-                closing_cash: closingCash,
+                closing_cash: closingCash, // Theoretical/POS record
+                cash_declared: cashDeclared, // Manual count
                 closing_stock_count_id: closingStockCountId || null,
                 closed_at: new Date().toISOString(),
                 status: 'closed',
@@ -453,6 +497,9 @@ router.post('/shifts/:id/close', async (req: Request, res: Response) => {
 
         // Calculate cash reconciliation
         const cashRecon = await calculateCashReconciliation(id);
+
+        // Auto-generate daily summary since a shift was just finalized
+        await generateDailySummary(new Date());
 
         res.json({
             shift,
@@ -708,15 +755,53 @@ router.post('/reorders', async (req: Request, res: Response) => {
 
 /**
  * POST /api/op/reorders/:id/approve
- * Approve a reorder request (from Store)
+ * Approve a reorder request with staff limit enforcement
  */
 router.post('/reorders/:id/approve', async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
-        const { approvedBy } = req.body;
+        const { approvedBy, approverId } = req.body; // Expecting ID now for limit check
 
         if (!approvedBy) {
             return res.status(400).json({ error: 'approvedBy is required' });
+        }
+
+        // 1. Get the reorder details the estimate value
+        const { data: reorder } = await supabaseAdmin
+            .from('op_reorder_requests')
+            .select('requested_quantity, ingredient_id')
+            .eq('id', id)
+            .single();
+
+        if (!reorder) return res.status(404).json({ error: 'Request not found' });
+
+        // Calculate estimated value using last cost
+        const { data: ingredient } = await supabaseAdmin
+            .from('op_ingredients')
+            .select('last_cost')
+            .eq('id', reorder.ingredient_id)
+            .single();
+
+        const estValue = (reorder.requested_quantity || 0) * (ingredient?.last_cost || 0);
+
+        // 2. Check approver limits if not Partner
+        if (approverId) {
+            const { data: staff } = await supabaseAdmin
+                .from('op_staff')
+                .select('role, can_approve, approval_limit')
+                .eq('id', approverId)
+                .single();
+
+            if (staff && staff.role !== 'partner') {
+                if (!staff.can_approve) {
+                    return res.status(403).json({ error: 'You do not have approval authority.' });
+                }
+                if (staff.approval_limit !== null && estValue > staff.approval_limit) {
+                    return res.status(403).json({
+                        error: `Exceeds your approval limit of KES ${staff.approval_limit}. (Request: ~KES ${estValue.toFixed(0)})`
+                    });
+                }
+            }
         }
 
         const { data, error } = await supabaseAdmin
@@ -727,16 +812,13 @@ router.post('/reorders/:id/approve', async (req: Request, res: Response) => {
                 approved_at: new Date().toISOString(),
             })
             .eq('id', id)
-            .eq('status', 'pending')  // Only approve pending requests
+            .eq('status', 'pending')
             .select()
             .single();
 
         if (error) throw error;
-        if (!data) {
-            return res.status(404).json({ error: 'Request not found or already processed' });
-        }
 
-        log(`Reorder request ${id} approved by ${approvedBy}`, 'reorder');
+        log(`Reorder request ${id} approved by ${approvedBy} (Value: ~KES ${estValue})`, 'reorder');
         res.json(data);
     } catch (error: any) {
         res.status(500).json({ error: error.message });

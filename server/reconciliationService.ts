@@ -398,3 +398,105 @@ export async function acknowledgeReconciliation(
 
     return !error;
 }
+/**
+ * Generate a comprehensive daily summary for a specific date
+ * Aggregates all activity into op_daily_summary table
+ */
+export async function generateDailySummary(date: Date): Promise<any> {
+    const dateStr = date.toISOString().split('T')[0];
+    log(`Generating daily summary for ${dateStr}`, 'reporting');
+
+    try {
+        // 1. Get Sales Summary
+        const { data: salesTx } = await supabaseAdmin
+            .from('op_synced_transactions')
+            .select('total_amount, payed_cash, payed_card')
+            .gte('transaction_date', `${dateStr}T00:00:00`)
+            .lt('transaction_date', `${dateStr}T23:59:59`);
+
+        const totalSales = salesTx?.reduce((sum: number, t: any) => sum + (parseFloat(t.total_amount) || 0), 0) || 0;
+        const cashSales = salesTx?.reduce((sum: number, t: any) => sum + (parseFloat(t.payed_cash) || 0), 0) || 0;
+        const cardSales = salesTx?.reduce((sum: number, t: any) => sum + (parseFloat(t.payed_card) || 0), 0) || 0;
+        const txCount = salesTx?.length || 0;
+
+        // 2. Get Consumption Summary
+        const { data: consumption } = await supabaseAdmin
+            .from('op_calculated_consumption')
+            .select('quantity_consumed, cost_at_time')
+            .gte('calculated_at', `${dateStr}T00:00:00`)
+            .lt('calculated_at', `${dateStr}T23:59:59`);
+
+        const totalConsumptionCost = consumption?.reduce((sum: number, c: any) => sum + (parseFloat(c.cost_at_time) || 0), 0) || 0;
+        const itemsConsumed = consumption?.length || 0;
+
+        // 3. Get Stock Variance
+        const { data: recon } = await supabaseAdmin
+            .from('op_daily_reconciliation')
+            .select('id, total_variance_value')
+            .eq('date', dateStr);
+
+        let stockVarianceCount = 0;
+        let stockVarianceValue = 0;
+
+        for (const r of recon || []) {
+            const { data: items } = await supabaseAdmin
+                .from('op_reconciliation_items')
+                .select('id')
+                .eq('reconciliation_id', r.id)
+                .neq('variance_status', 'matched');
+
+            stockVarianceCount += items?.length || 0;
+            stockVarianceValue += parseFloat(r.total_variance_value) || 0;
+        }
+
+        // 4. Get Cash Variance (from shifts closed today)
+        const { data: shifts } = await supabaseAdmin
+            .from('op_shifts')
+            .select('cash_variance')
+            .gte('closed_at', `${dateStr}T00:00:00`)
+            .lt('closed_at', `${dateStr}T23:59:59`);
+
+        const cashVariance = shifts?.reduce((sum: number, s: any) => sum + (parseFloat(s.cash_variance) || 0), 0) || 0;
+
+        // 5. Get Ops Metrics
+        const { count: shiftsOpened } = await supabaseAdmin.from('op_shifts').select('*', { count: 'exact', head: true }).gte('opened_at', `${dateStr}T00:00:00`).lt('opened_at', `${dateStr}T23:59:59`);
+        const { count: reordersCreated } = await supabaseAdmin.from('op_reorder_requests').select('*', { count: 'exact', head: true }).gte('requested_at', `${dateStr}T00:00:00`).lt('requested_at', `${dateStr}T23:59:59`);
+        const { count: dispatchesSent } = await supabaseAdmin.from('op_store_dispatches').select('*', { count: 'exact', head: true }).gte('dispatched_at', `${dateStr}T00:00:00`).lt('dispatched_at', `${dateStr}T23:59:59`);
+        const { count: dispatchesReceived } = await supabaseAdmin.from('op_shop_receipts').select('*', { count: 'exact', head: true }).gte('received_at', `${dateStr}T00:00:00`).lt('received_at', `${dateStr}T23:59:59`);
+
+        // Calculate Gross Margin
+        const grossMargin = totalSales - totalConsumptionCost;
+
+        // 6. Upsert Daily Summary
+        const summaryData = {
+            summary_date: dateStr,
+            total_sales: totalSales,
+            cash_sales: cashSales,
+            card_sales: cardSales,
+            transaction_count: txCount,
+            total_consumption_cost: totalConsumptionCost,
+            items_consumed: itemsConsumed,
+            stock_variance_count: stockVarianceCount,
+            stock_variance_value: stockVarianceValue,
+            cash_variance: cashVariance,
+            shifts_opened: shiftsOpened || 0,
+            dispatches_sent: dispatchesSent || 0,
+            dispatches_received: dispatchesReceived || 0,
+            reorders_created: reordersCreated || 0,
+            gross_margin: grossMargin,
+        };
+
+        const { data: finalSummary, error } = await supabaseAdmin
+            .from('op_daily_summary')
+            .upsert(summaryData, { onConflict: 'summary_date' })
+            .select()
+            .single();
+
+        if (error) throw error;
+        return finalSummary;
+
+    } catch (error: any) {
+        log(`Failed to generate daily summary: ${error.message}`, 'reporting');
+        return null;
+    }
+}
