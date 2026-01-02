@@ -48,9 +48,9 @@ export default function ToBuy() {
 
     // Fetch approved PRs
     const { data: queue, isLoading } = useQuery<PurchaseRequest[]>({
-        queryKey: ["/api/store-portal/queue/to-buy"],
+        queryKey: ["/api/store/queue/to-buy"],
         queryFn: async () => {
-            const res = await fetch("/api/store-portal/queue/to-buy");
+            const res = await fetch("/api/store/queue/to-buy");
             return res.json();
         },
     });
@@ -66,7 +66,7 @@ export default function ToBuy() {
                 actualCost: executionData[item.id]?.actualCost || 0,
             }));
 
-            const res = await fetch("/api/store-portal/purchases/execute", {
+            const res = await fetch("/api/store/purchases/execute", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -86,7 +86,7 @@ export default function ToBuy() {
         },
         onSuccess: () => {
             toast({ title: "Purchase Completed", description: "Stock has been updated." });
-            queryClient.invalidateQueries({ queryKey: ["/api/store-portal/queue/to-buy"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/store/queue/to-buy"] });
             setSelectedPR(null);
             setExecutionData({});
             setExecutedBy("");

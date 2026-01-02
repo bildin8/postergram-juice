@@ -25,16 +25,16 @@ export default function ShiftOpen() {
 
     // Fetch shop staff
     const { data: staffList } = useQuery<Staff[]>({
-        queryKey: ["/api/shop-portal/staff"],
+        queryKey: ["/api/shop/staff"],
         queryFn: async () => {
-            const res = await fetch("/api/shop-portal/staff");
+            const res = await fetch("/api/shop/staff");
             return res.json();
         },
     });
 
     const openShiftMutation = useMutation({
         mutationFn: async () => {
-            const res = await fetch("/api/shop-portal/shifts/open", {
+            const res = await fetch("/api/shop/shifts/open", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

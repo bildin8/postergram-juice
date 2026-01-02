@@ -52,18 +52,18 @@ export default function ShopStock() {
 
   // Fetch current shift
   const { data: currentShift } = useQuery({
-    queryKey: ["/api/shop-portal/shifts/current"],
+    queryKey: ["/api/shop/shifts/current"],
     queryFn: async () => {
-      const res = await fetch("/api/shop-portal/shifts/current");
+      const res = await fetch("/api/shop/shifts/current");
       return res.json();
     },
   });
 
   // Fetch common items for counting
   const { data: items, isLoading: itemsLoading } = useQuery<CommonItem[]>({
-    queryKey: ["/api/shop-portal/stock/common-items"],
+    queryKey: ["/api/shop/stock/common-items"],
     queryFn: async () => {
-      const res = await fetch("/api/shop-portal/stock/common-items");
+      const res = await fetch("/api/shop/stock/common-items");
       if (!res.ok) return [];
       return res.json();
     },
@@ -71,9 +71,9 @@ export default function ShopStock() {
 
   // Fetch today's sessions
   const { data: todaySessions } = useQuery<StockSession[]>({
-    queryKey: ["/api/shop-portal/stock/sessions/today"],
+    queryKey: ["/api/shop/stock/sessions/today"],
     queryFn: async () => {
-      const res = await fetch("/api/shop-portal/stock/sessions/today");
+      const res = await fetch("/api/shop/stock/sessions/today");
       if (!res.ok) return [];
       return res.json();
     },
@@ -92,7 +92,7 @@ export default function ShopStock() {
 
       if (entriesList.length === 0) throw new Error("No items counted");
 
-      const res = await fetch("/api/shop-portal/stock/entries", {
+      const res = await fetch("/api/shop/stock/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -107,7 +107,7 @@ export default function ShopStock() {
     onSuccess: () => {
       toast({ title: "Stock Saved", description: `Successfully recorded ${Object.keys(counts).length} items` });
       setCounts({});
-      queryClient.invalidateQueries({ queryKey: ["/api/shop-portal/stock/sessions/today"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/shop/stock/sessions/today"] });
     },
     onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });

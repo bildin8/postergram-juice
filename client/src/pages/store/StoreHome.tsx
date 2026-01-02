@@ -24,14 +24,14 @@ interface QueueCounts {
 export default function StoreHome() {
     // Fetch queue counts
     const { data: counts } = useQuery<QueueCounts>({
-        queryKey: ["/api/store-portal/queue-counts"],
+        queryKey: ["/api/store/queue-counts"],
         queryFn: async () => {
             // Aggregate counts from multiple endpoints
             const [buyRes, dispatchRes, productionRes, exceptionsRes] = await Promise.all([
-                fetch("/api/store-portal/queue/to-buy").then(r => r.json()),
-                fetch("/api/store-portal/queue/to-dispatch").then(r => r.json()),
-                fetch("/api/store-portal/queue/production").then(r => r.json()),
-                fetch("/api/store-portal/exceptions").then(r => r.json()),
+                fetch("/api/store/queue/to-buy").then(r => r.json()),
+                fetch("/api/store/queue/to-dispatch").then(r => r.json()),
+                fetch("/api/store/queue/production").then(r => r.json()),
+                fetch("/api/store/exceptions").then(r => r.json()),
             ]);
 
             return {

@@ -36,9 +36,9 @@ export default function LocalBuyTasks() {
 
     // Fetch assigned tasks
     const { data: tasks, isLoading } = useQuery<LocalBuyTask[]>({
-        queryKey: ["/api/shop-portal/local-buy-tasks"],
+        queryKey: ["/api/shop/local-buy-tasks"],
         queryFn: async () => {
-            const res = await fetch("/api/shop-portal/local-buy-tasks");
+            const res = await fetch("/api/shop/local-buy-tasks");
             return res.json();
         },
     });
@@ -48,7 +48,7 @@ export default function LocalBuyTasks() {
         mutationFn: async () => {
             if (!selectedTask) throw new Error("No task selected");
 
-            const res = await fetch(`/api/shop-portal/local-buy-tasks/${selectedTask.id}/execute`, {
+            const res = await fetch(`/api/shop/local-buy-tasks/${selectedTask.id}/execute`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -66,7 +66,7 @@ export default function LocalBuyTasks() {
         },
         onSuccess: () => {
             toast({ title: "Task Completed", description: "Local buy has been recorded." });
-            queryClient.invalidateQueries({ queryKey: ["/api/shop-portal/local-buy-tasks"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/shop/local-buy-tasks"] });
             setSelectedTask(null);
             setActualQty(0);
             setActualCost(0);

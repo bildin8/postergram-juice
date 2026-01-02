@@ -40,9 +40,9 @@ export default function ShopExpenses() {
 
     // Fetch today's expenses
     const { data: todaysExpenses } = useQuery({
-        queryKey: ["/api/shop-portal/expenses/today"],
+        queryKey: ["/api/shop/expenses/today"],
         queryFn: async () => {
-            const res = await fetch("/api/shop-portal/expenses/today");
+            const res = await fetch("/api/shop/expenses/today");
             return res.json();
         },
     });
@@ -50,7 +50,7 @@ export default function ShopExpenses() {
     // Submit expense
     const submitMutation = useMutation({
         mutationFn: async () => {
-            const res = await fetch("/api/shop-portal/expenses", {
+            const res = await fetch("/api/shop/expenses", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -72,7 +72,7 @@ export default function ShopExpenses() {
         },
         onSuccess: () => {
             toast({ title: "Expense Recorded", description: "Expense has been saved." });
-            queryClient.invalidateQueries({ queryKey: ["/api/shop-portal/expenses/today"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/shop/expenses/today"] });
             setItems([{ description: "", amount: 0 }]);
             setNotes("");
         },

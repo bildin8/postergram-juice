@@ -2489,12 +2489,5 @@ export async function registerRoutes(
   app.use("/api/v2", inventoryRoutes);
   log('Enhanced inventory routes mounted at /api/v2');
 
-  // ============ PORTAL ROUTES ============
-  app.use("/api/store-portal", storePortalRoutes);
-  app.use("/api/shop-portal", shopPortalRoutes);
-  app.use("/api/partner", partnerPortalRoutes);
-  app.use("/api/insights", insightsRoutes);
-  log('Portal routes mounted: /api/store-portal, /api/shop-portal, /api/partner, /api/insights');
-
   return httpServer;
 }

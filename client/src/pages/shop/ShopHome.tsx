@@ -38,9 +38,9 @@ interface ChecklistItem {
 export default function ShopHome() {
     // Get current shift
     const { data: currentShift, isLoading: shiftLoading } = useQuery<Shift | null>({
-        queryKey: ["/api/shop-portal/shifts/current"],
+        queryKey: ["/api/shop/shifts/current"],
         queryFn: async () => {
-            const res = await fetch("/api/shop-portal/shifts/current");
+            const res = await fetch("/api/shop/shifts/current");
             if (!res.ok) return null;
             return res.json();
         },
@@ -49,18 +49,18 @@ export default function ShopHome() {
 
     // Get pending dispatches
     const { data: pendingDispatches } = useQuery({
-        queryKey: ["/api/shop-portal/pending-dispatches"],
+        queryKey: ["/api/shop/pending-dispatches"],
         queryFn: async () => {
-            const res = await fetch("/api/shop-portal/pending-dispatches");
+            const res = await fetch("/api/shop/pending-dispatches");
             return res.json();
         },
     });
 
     // Get local buy tasks
     const { data: localBuyTasks } = useQuery({
-        queryKey: ["/api/shop-portal/local-buy-tasks"],
+        queryKey: ["/api/shop/local-buy-tasks"],
         queryFn: async () => {
-            const res = await fetch("/api/shop-portal/local-buy-tasks");
+            const res = await fetch("/api/shop/local-buy-tasks");
             return res.json();
         },
     });

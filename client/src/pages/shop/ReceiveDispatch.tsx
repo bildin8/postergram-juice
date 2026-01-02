@@ -33,9 +33,9 @@ export default function ReceiveDispatch() {
 
     // Fetch pending dispatches
     const { data: pending, isLoading } = useQuery<Dispatch[]>({
-        queryKey: ["/api/shop-portal/pending-dispatches"],
+        queryKey: ["/api/shop/pending-dispatches"],
         queryFn: async () => {
-            const res = await fetch("/api/shop-portal/pending-dispatches");
+            const res = await fetch("/api/shop/pending-dispatches");
             return res.json();
         },
     });
@@ -43,7 +43,7 @@ export default function ReceiveDispatch() {
     // Confirm receipt
     const confirmMutation = useMutation({
         mutationFn: async (dispatchId: string) => {
-            const res = await fetch(`/api/shop-portal/dispatches/${dispatchId}/confirm`, {
+            const res = await fetch(`/api/shop/dispatches/${dispatchId}/confirm`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ confirmedBy: "Shop Staff" }),
@@ -57,7 +57,7 @@ export default function ReceiveDispatch() {
         },
         onSuccess: () => {
             toast({ title: "Dispatch Confirmed", description: "Items added to shop stock." });
-            queryClient.invalidateQueries({ queryKey: ["/api/shop-portal/pending-dispatches"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/shop/pending-dispatches"] });
         },
         onError: (error: Error) => {
             toast({ title: "Error", description: error.message, variant: "destructive" });

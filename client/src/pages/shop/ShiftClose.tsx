@@ -27,9 +27,9 @@ export default function ShiftClose() {
 
     // Get current shift
     const { data: currentShift, isLoading } = useQuery<Shift | null>({
-        queryKey: ["/api/shop-portal/shifts/current"],
+        queryKey: ["/api/shop/shifts/current"],
         queryFn: async () => {
-            const res = await fetch("/api/shop-portal/shifts/current");
+            const res = await fetch("/api/shop/shifts/current");
             if (!res.ok) return null;
             return res.json();
         },
@@ -37,7 +37,7 @@ export default function ShiftClose() {
 
     const closeShiftMutation = useMutation({
         mutationFn: async () => {
-            const res = await fetch("/api/shop-portal/shifts/close", {
+            const res = await fetch("/api/shop/shifts/close", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
