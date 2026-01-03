@@ -126,11 +126,8 @@ router.post('/approve/:type/:id', async (req, res) => {
             // But for backward compatibility with Telegram, we might need to be careful.
             // However, Telegram sends "TG:username".
 
-            if (data.approvedBy === 'Partner' && !data.passphrase) {
-                // Creating a 'Soft' enforcement: If approvedBy is generic 'Partner', require PIN.
-                // This matches the UI change.
-                return res.status(403).json({ message: 'PIN/Passphrase is required for approval.' });
-            }
+            // Passphrase is now optional. If provided, we verify it.
+            // If not provided, we assume the Partner Portal access is sufficient auth.
         }
 
         if (type === 'purchase_request') {

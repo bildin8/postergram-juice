@@ -46,8 +46,6 @@ interface Approval {
 export default function ApprovalsInbox() {
     const { toast } = useToast();
     const queryClient = useQueryClient();
-    const [pin, setPin] = useState("");
-    const [showPinDialog, setShowPinDialog] = useState(false);
     const [pendingApproval, setPendingApproval] = useState<{ type: string; id: string } | null>(null);
     const [isBulkApprove, setIsBulkApprove] = useState(false);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -69,8 +67,7 @@ export default function ApprovalsInbox() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    approvedBy: "Partner", // In real app, this would be derived from auth/passphrase user
-                    passphrase
+                    approvedBy: "Partner", // In real app, this would be derived from auth
                 }),
             });
 
@@ -91,39 +88,22 @@ export default function ApprovalsInbox() {
         },
     });
 
-    const resetPinState = () => {
-        setPin("");
-        setShowPinDialog(false);
+    const resetState = () => {
         setPendingApproval(null);
         setIsBulkApprove(false);
+        setIsBulkProcessing(false);
     };
 
     const initiateApprove = (type: string, id: string) => {
-        setPendingApproval({ type, id });
-        setIsBulkApprove(false);
-        setShowPinDialog(true);
+        if (confirm("Confirm approval?")) {
+            approveMutation.mutate({ type, id });
+        }
     };
 
     const initiateBulkApprove = () => {
         if (selectedIds.size === 0) return;
-        setIsBulkApprove(true);
-        setShowPinDialog(true);
-    };
-
-    const handlePinSubmit = () => {
-        if (!pin.trim()) {
-            toast({ title: "Error", description: "PIN is required", variant: "destructive" });
-            return;
-        }
-
-        if (isBulkApprove) {
-            handleBulkApproveWithPin();
-        } else if (pendingApproval) {
-            approveMutation.mutate({
-                type: pendingApproval.type,
-                id: pendingApproval.id,
-                passphrase: pin
-            });
+        if (confirm(`Approve ${selectedIds.size} selected items?`)) {
+            handleBulkApprove();
         }
     };
 
@@ -179,8 +159,8 @@ export default function ApprovalsInbox() {
         }
     };
 
-    const handleBulkApproveWithPin = async () => {
-        // Optimistic UI update or promise.all
+    const handleBulkApprove = async () => {
+        setIsBulkProcessing(true);
         let successCount = 0;
         const selected = approvals?.filter(a => selectedIds.has(a.id)) || [];
 
@@ -188,8 +168,7 @@ export default function ApprovalsInbox() {
             try {
                 await approveMutation.mutateAsync({
                     type: item.type,
-                    id: item.id,
-                    passphrase: pin
+                    id: item.id
                 });
                 successCount++;
             } catch (e) {
@@ -199,7 +178,7 @@ export default function ApprovalsInbox() {
 
         toast({ title: "Bulk Action Complete", description: `Approved ${successCount} requests.` });
         setSelectedIds(new Set());
-        resetPinState();
+        resetState();
     };
 
     const toggleExpand = (id: string) => {
@@ -252,42 +231,7 @@ export default function ApprovalsInbox() {
                 </div>
 
                 {/* PIN Dialog (Overlay) */}
-                {showPinDialog && (
-                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                        <Card className="bg-slate-900 border-slate-700 w-full max-w-sm">
-                            <CardHeader>
-                                <CardTitle className="text-white text-center">Enter Partner PIN</CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                                <Input
-                                    type="password"
-                                    placeholder="Enter Passphrase"
-                                    value={pin}
-                                    onChange={(e) => setPin(e.target.value)}
-                                    className="bg-slate-950 border-slate-700 text-center text-2xl tracking-widest text-white"
-                                    autoFocus
-                                    onKeyDown={(e) => e.key === "Enter" && handlePinSubmit()}
-                                />
-                                <div className="flex gap-2">
-                                    <Button
-                                        variant="outline"
-                                        className="flex-1 border-slate-600 text-slate-400"
-                                        onClick={resetPinState}
-                                    >
-                                        Cancel
-                                    </Button>
-                                    <Button
-                                        className="flex-1 bg-emerald-600 hover:bg-emerald-700"
-                                        onClick={handlePinSubmit}
-                                        disabled={approveMutation.isPending}
-                                    >
-                                        {approveMutation.isPending ? "Verifying..." : "Confirm"}
-                                    </Button>
-                                </div>
-                            </CardContent>
-                        </Card>
-                    </div>
-                )}
+
 
                 {/* Loading */}
                 {isLoading && (
