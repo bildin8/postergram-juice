@@ -14,7 +14,8 @@ import {
     ShoppingCart,
     Package,
     ChevronDown,
-    ChevronUp
+    ChevronUp,
+    XCircle
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -49,6 +50,10 @@ export default function ApprovalsInbox() {
     const [showPinDialog, setShowPinDialog] = useState(false);
     const [pendingApproval, setPendingApproval] = useState<{ type: string; id: string } | null>(null);
     const [isBulkApprove, setIsBulkApprove] = useState(false);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [expandedId, setExpandedId] = useState<string | null>(null);
+    const [rejectingId, setRejectingId] = useState<string | null>(null);
+    const [rejectReason, setRejectReason] = useState("");
 
     const { data: approvals, isLoading } = useQuery<Approval[]>({
         queryKey: ["/api/partner/approvals"],
