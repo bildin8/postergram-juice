@@ -1247,27 +1247,28 @@ router.get('/reports/consumption-trends', async (req: Request, res: Response) =>
         const fromDate = new Date();
         fromDate.setDate(fromDate.getDate() - daysNum);
 
-        // Get daily consumption by ingredient
+        // Get daily consumption by ingredient using the view
         const { data, error } = await supabaseAdmin
-            .from('op_calculated_consumption')
+            .from('v_op_daily_consumption')
             .select(`
-                consumption_date,
-                ingredient_id,
-                op_ingredients(name, unit),
-                quantity_consumed
+                sale_date,
+                ingredient_name,
+                total_consumed,
+                unit
             `)
-            .gte('consumption_date', fromDate.toISOString().split('T')[0])
-            .order('consumption_date', { ascending: true });
+            .gte('sale_date', fromDate.toISOString().split('T')[0])
+            .order('sale_date', { ascending: true });
 
         if (error) throw error;
 
         // Aggregate by ingredient per day
         const trends: Record<string, Record<string, number>> = {};
         for (const row of data || []) {
-            const ingredient = (row as any).op_ingredients?.name || 'Unknown';
-            const date = row.consumption_date;
+            const ingredient = row.ingredient_name || 'Unknown';
+            const date = row.sale_date;
             if (!trends[ingredient]) trends[ingredient] = {};
-            trends[ingredient][date] = (trends[ingredient][date] || 0) + (row.quantity_consumed || 0);
+            // The view already sums per day, but just in case multiple rows per day/ingredient (unlikely with GROUP BY)
+            trends[ingredient][date] = (trends[ingredient][date] || 0) + (row.total_consumed || 0);
         }
 
         res.json(trends);
