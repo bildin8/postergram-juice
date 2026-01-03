@@ -8,7 +8,7 @@ import {
     RefreshCw, TrendingUp, TrendingDown, DollarSign, Package,
     AlertTriangle, Clock, ShoppingCart, Zap, BarChart3,
     ArrowUpRight, ArrowDownRight, Activity, Calendar, ListOrdered,
-    History, PieChart, Info
+    History, PieChart, Info, Shield
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
