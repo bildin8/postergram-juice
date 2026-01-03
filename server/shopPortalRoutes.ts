@@ -851,5 +851,66 @@ router.post('/stock/entries', async (req, res) => {
     }
 });
 
+// Create Shop Replenishment Request (SRR)
+router.post('/replenishment-requests', async (req, res) => {
+    try {
+        const schema = z.object({
+            requestedBy: z.string(),
+            items: z.array(z.object({
+                itemName: z.string(),
+                requestedQty: z.number(),
+                unit: z.string().optional(),
+                notes: z.string().optional(),
+            })),
+            notes: z.string().optional(),
+            priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
+            status: z.enum(['pending', 'approved']).default('pending'), // Allow auto-approval
+        });
+
+        const data = schema.parse(req.body);
+
+        // Create the SRR
+        const { data: srr, error: srrError } = await supabaseAdmin
+            .from('shop_replenishment_requests')
+            .insert({
+                requested_by: data.requestedBy,
+                notes: data.notes,
+                priority: data.priority,
+                status: data.status,
+                approved_at: data.status === 'approved' ? new Date().toISOString() : null,
+                approved_by: data.status === 'approved' ? 'Partner (Auto)' : null,
+            })
+            .select()
+            .single();
+
+        if (srrError) throw srrError;
+
+        // Create items
+        const itemInserts = data.items.map(item => ({
+            srr_id: srr.id,
+            item_name: item.itemName,
+            requested_qty: item.requestedQty,
+            unit: item.unit || 'units',
+            notes: item.notes,
+            approved_qty: data.status === 'approved' ? item.requestedQty : null,
+        }));
+
+        const { error: itemsError } = await supabaseAdmin
+            .from('srr_items')
+            .insert(itemInserts);
+
+        if (itemsError) throw itemsError;
+
+        res.json({
+            success: true,
+            srrId: srr.id,
+            itemCount: data.items.length,
+        });
+    } catch (error: any) {
+        log(`Error creating SRR: ${error.message}`);
+        res.status(500).json({ message: 'Failed to create replenishment request' });
+    }
+});
+
 export default router;
 

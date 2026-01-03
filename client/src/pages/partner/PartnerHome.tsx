@@ -17,7 +17,8 @@ import {
     Boxes,
     ClipboardList,
     PieChart,
-    Truck
+    Truck,
+    Factory
 } from "lucide-react";
 
 
@@ -163,6 +164,14 @@ export default function PartnerHome() {
             icon: Truck,
             href: "/partner/local-buys",
             color: "bg-indigo-600",
+        },
+        // Store/Supply Chain Operations (Moved from Store Portal)
+        {
+            title: "Supply Chain",
+            description: "Manage Purchases, Packing & Dispatch",
+            icon: Factory,
+            href: "/store", // Re-using Store Home as the entry point for now
+            color: "bg-cyan-700",
         },
     ];
 

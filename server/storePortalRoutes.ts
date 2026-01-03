@@ -229,6 +229,23 @@ router.post('/dispatches/from-srr', async (req, res) => {
     }
 });
 
+// Get dispatch history
+router.get('/dispatches', async (req, res) => {
+    try {
+        const { data, error } = await supabaseAdmin
+            .from('store_despatches')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(50);
+
+        if (error) throw error;
+        res.json(data || []);
+    } catch (error: any) {
+        log(`Error fetching dispatch history: ${error.message}`);
+        res.status(500).json({ message: 'Failed to fetch dispatch history' });
+    }
+});
+
 // ============================================================================
 // CROSS-DOCK QUEUE (Trade goods - no processing)
 // ============================================================================

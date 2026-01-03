@@ -1,6 +1,7 @@
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
     ShoppingCart,
@@ -110,7 +111,13 @@ export default function StoreHome() {
             <div className="max-w-6xl mx-auto">
                 {/* Header */}
                 <div className="mb-8">
-                    <h1 className="text-3xl font-bold text-white mb-2">Store Portal</h1>
+                    <Link href="/partner">
+                        <Button variant="ghost" className="text-slate-400 hover:text-white mb-4">
+                            <ArrowRightLeft className="h-4 w-4 mr-2" />
+                            Back to Partner
+                        </Button>
+                    </Link>
+                    <h1 className="text-3xl font-bold text-white mb-2">Supply Chain Operations</h1>
                     <p className="text-slate-400">Execution dashboard for store operations</p>
                 </div>
 
