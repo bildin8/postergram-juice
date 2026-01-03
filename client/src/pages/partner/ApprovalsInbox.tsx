@@ -45,13 +45,12 @@ interface Approval {
 export default function ApprovalsInbox() {
     const { toast } = useToast();
     const queryClient = useQueryClient();
-    const [expandedId, setExpandedId] = useState<string | null>(null);
-    const [rejectReason, setRejectReason] = useState("");
-    const [rejectingId, setRejectingId] = useState<string | null>(null);
-    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [pin, setPin] = useState("");
+    const [showPinDialog, setShowPinDialog] = useState(false);
+    const [pendingApproval, setPendingApproval] = useState<{ type: string; id: string } | null>(null);
+    const [isBulkApprove, setIsBulkApprove] = useState(false);
 
     const { data: approvals, isLoading } = useQuery<Approval[]>({
-
         queryKey: ["/api/partner/approvals"],
         queryFn: async () => {
             const res = await fetch("/api/partner/approvals");
@@ -60,11 +59,14 @@ export default function ApprovalsInbox() {
     });
 
     const approveMutation = useMutation({
-        mutationFn: async ({ type, id }: { type: string; id: string }) => {
+        mutationFn: async ({ type, id, passphrase }: { type: string; id: string; passphrase?: string }) => {
             const res = await fetch(`/api/partner/approve/${type}/${id}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ approvedBy: "Partner" }),
+                body: JSON.stringify({
+                    approvedBy: "Partner", // In real app, this would be derived from auth/passphrase user
+                    passphrase
+                }),
             });
 
             if (!res.ok) {
@@ -77,11 +79,48 @@ export default function ApprovalsInbox() {
         onSuccess: () => {
             toast({ title: "Approved", description: "Request has been approved." });
             queryClient.invalidateQueries({ queryKey: ["/api/partner/approvals"] });
+            resetPinState();
         },
         onError: (error: Error) => {
             toast({ title: "Error", description: error.message, variant: "destructive" });
         },
     });
+
+    const resetPinState = () => {
+        setPin("");
+        setShowPinDialog(false);
+        setPendingApproval(null);
+        setIsBulkApprove(false);
+    };
+
+    const initiateApprove = (type: string, id: string) => {
+        setPendingApproval({ type, id });
+        setIsBulkApprove(false);
+        setShowPinDialog(true);
+    };
+
+    const initiateBulkApprove = () => {
+        if (selectedIds.size === 0) return;
+        setIsBulkApprove(true);
+        setShowPinDialog(true);
+    };
+
+    const handlePinSubmit = () => {
+        if (!pin.trim()) {
+            toast({ title: "Error", description: "PIN is required", variant: "destructive" });
+            return;
+        }
+
+        if (isBulkApprove) {
+            handleBulkApproveWithPin();
+        } else if (pendingApproval) {
+            approveMutation.mutate({
+                type: pendingApproval.type,
+                id: pendingApproval.id,
+                passphrase: pin
+            });
+        }
+    };
 
     const rejectMutation = useMutation({
         mutationFn: async ({ type, id, reason }: { type: string; id: string; reason: string }) => {
@@ -135,17 +174,18 @@ export default function ApprovalsInbox() {
         }
     };
 
-    const handleBulkApprove = async () => {
-        if (selectedIds.size === 0) return;
-
+    const handleBulkApproveWithPin = async () => {
         // Optimistic UI update or promise.all
-        // For simplicity, we'll iterate. Ideally backend should have a bulk endpoint.
         let successCount = 0;
         const selected = approvals?.filter(a => selectedIds.has(a.id)) || [];
 
         for (const item of selected) {
             try {
-                await approveMutation.mutateAsync({ type: item.type, id: item.id });
+                await approveMutation.mutateAsync({
+                    type: item.type,
+                    id: item.id,
+                    passphrase: pin
+                });
                 successCount++;
             } catch (e) {
                 console.error(e);
@@ -154,8 +194,8 @@ export default function ApprovalsInbox() {
 
         toast({ title: "Bulk Action Complete", description: `Approved ${successCount} requests.` });
         setSelectedIds(new Set());
+        resetPinState();
     };
-
 
     const toggleExpand = (id: string) => {
         setExpandedId((prev) => (prev === id ? null : id));
@@ -206,6 +246,43 @@ export default function ApprovalsInbox() {
                     </div>
                 </div>
 
+                {/* PIN Dialog (Overlay) */}
+                {showPinDialog && (
+                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <Card className="bg-slate-900 border-slate-700 w-full max-w-sm">
+                            <CardHeader>
+                                <CardTitle className="text-white text-center">Enter Partner PIN</CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <Input
+                                    type="password"
+                                    placeholder="Enter Passphrase"
+                                    value={pin}
+                                    onChange={(e) => setPin(e.target.value)}
+                                    className="bg-slate-950 border-slate-700 text-center text-2xl tracking-widest text-white"
+                                    autoFocus
+                                    onKeyDown={(e) => e.key === "Enter" && handlePinSubmit()}
+                                />
+                                <div className="flex gap-2">
+                                    <Button
+                                        variant="outline"
+                                        className="flex-1 border-slate-600 text-slate-400"
+                                        onClick={resetPinState}
+                                    >
+                                        Cancel
+                                    </Button>
+                                    <Button
+                                        className="flex-1 bg-emerald-600 hover:bg-emerald-700"
+                                        onClick={handlePinSubmit}
+                                        disabled={approveMutation.isPending}
+                                    >
+                                        {approveMutation.isPending ? "Verifying..." : "Confirm"}
+                                    </Button>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </div>
+                )}
 
                 {/* Loading */}
                 {isLoading && (
@@ -363,7 +440,7 @@ export default function ApprovalsInbox() {
                                         <div className="flex gap-3">
                                             <Button
                                                 className="flex-1 bg-emerald-600 hover:bg-emerald-700"
-                                                onClick={() => approveMutation.mutate({ type: approval.type, id: approval.id })}
+                                                onClick={() => initiateApprove(approval.type, approval.id)}
                                                 disabled={approveMutation.isPending}
                                             >
                                                 <Check className="h-4 w-4 mr-2" />
@@ -374,7 +451,7 @@ export default function ApprovalsInbox() {
                                                 className="flex-1 border-red-600 text-red-400 hover:bg-red-900/20"
                                                 onClick={() => setRejectingId(approval.id)}
                                             >
-                                                <X className="h-4 w-4 mr-2" />
+                                                <XCircle className="h-4 w-4 mr-2" />
                                                 Reject
                                             </Button>
                                         </div>
@@ -393,7 +470,7 @@ export default function ApprovalsInbox() {
                         <Button
                             size="sm"
                             className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-full px-6"
-                            onClick={handleBulkApprove}
+                            onClick={initiateBulkApprove}
                             disabled={approveMutation.isPending}
                         >
                             {approveMutation.isPending ? "Approving..." : "Approve Selected"}

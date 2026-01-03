@@ -87,6 +87,7 @@ router.post('/approve/:type/:id', async (req, res) => {
         const { type, id } = req.params;
         const schema = z.object({
             approvedBy: z.string(),
+            passphrase: z.string().optional(),
             adjustments: z.array(z.object({
                 itemId: z.string().uuid(),
                 approvedQty: z.number(),
@@ -96,6 +97,41 @@ router.post('/approve/:type/:id', async (req, res) => {
         });
 
         const data = schema.parse(req.body);
+
+        // Verify passphrase if provided (Security Enforcement)
+        if (data.passphrase) {
+            const { data: staff } = await supabaseAdmin
+                .from('op_staff')
+                .select('*')
+                .eq('passphrase', data.passphrase)
+                .single();
+
+            if (!staff) {
+                return res.status(403).json({ message: 'Invalid PIN/Passphrase' });
+            }
+
+            if (!staff.can_approve) {
+                return res.status(403).json({ message: 'You are not authorized to approve requests.' });
+            }
+
+            // Update approvedBy to real name
+            data.approvedBy = staff.name;
+
+            // Limit check logic will be applied below based on request total
+        } else {
+            // If no passphrase provided, we might want to fail IF strict mode is on.
+            // For now, if the user reported "missing pin", let's assume we REQUIRE it for Partner actions
+            // or we just fallback to existing behavior but user said they were blocked.
+            // Let's enforce it if the input came from the new UI (which sends passphrase).
+            // But for backward compatibility with Telegram, we might need to be careful.
+            // However, Telegram sends "TG:username".
+
+            if (data.approvedBy === 'Partner' && !data.passphrase) {
+                // Creating a 'Soft' enforcement: If approvedBy is generic 'Partner', require PIN.
+                // This matches the UI change.
+                return res.status(403).json({ message: 'PIN/Passphrase is required for approval.' });
+            }
+        }
 
         if (type === 'purchase_request') {
             // Apply item adjustments if any

@@ -11,6 +11,13 @@ import {
     History, PieChart, Info, Shield
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 interface Transaction {
     id: string;
@@ -470,6 +477,7 @@ export default function PowerDashboard() {
                                     <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent className="bg-slate-800 border-slate-700 text-white">
+                                    <SelectItem value="1">Today</SelectItem>
                                     <SelectItem value="7">Last 7 Days</SelectItem>
                                     <SelectItem value="14">Last 14 Days</SelectItem>
                                     <SelectItem value="30">Last 30 Days</SelectItem>
@@ -607,25 +615,4 @@ export default function PowerDashboard() {
             </div>
         </div>
     );
-}
-
-// Select component stubs for compilation if not imported or path issues
-function Select({ children, value, onValueChange }: any) {
-    return <div className="flex items-center h-8">{children}</div>;
-}
-
-function SelectTrigger({ className, children }: any) {
-    return <div className={`flex items-center px-3 border rounded text-white ${className}`}>{children}</div>;
-}
-
-function SelectValue() {
-    return <span>Days</span>;
-}
-
-function SelectContent({ children }: any) {
-    return null; // Not strictly used in stub but for structure
-}
-
-function SelectItem({ children, value }: any) {
-    return null; // Not strictly used in stub
 }

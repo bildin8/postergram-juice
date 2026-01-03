@@ -9,6 +9,7 @@ import {
     Wallet,
     Users,
     Bell,
+    Settings,
     TrendingUp,
     ArrowRight,
     AlertTriangle,
@@ -92,6 +93,7 @@ export default function PartnerHome() {
     const flaggedCount = flaggedShifts?.length || 0;
     const cashVariance = cashRecon?.variance?.amount || 0;
 
+
     const modules = [
         {
             title: "⚡ Power Dashboard",
@@ -100,6 +102,13 @@ export default function PartnerHome() {
             href: "/partner/power",
             color: "bg-gradient-to-br from-yellow-500 to-orange-600",
             featured: true,
+        },
+        {
+            title: "Partner Settings",
+            description: "Configure controls & preferences",
+            icon: Settings,
+            href: "/partner/settings",
+            color: "bg-slate-600",
         },
         {
             title: "Approvals Inbox",
