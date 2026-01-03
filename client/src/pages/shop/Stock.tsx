@@ -83,11 +83,15 @@ export default function ShopStock() {
   const saveEntriesMutation = useMutation({
     mutationFn: async () => {
       const entriesList = Object.entries(counts)
-        .map(([name, qty]) => ({
-          itemName: name,
-          quantity: qty,
-          unit: items?.find(i => i.name === name)?.unit || "units"
-        }))
+        .map(([name, qty]) => {
+          const item = items?.find(i => i.name === name);
+          return {
+            ingredientId: item?.id,
+            itemName: name,
+            quantity: qty,
+            unit: item?.unit || "units"
+          };
+        })
         .filter(e => e.quantity > 0);
 
       if (entriesList.length === 0) throw new Error("No items counted");
@@ -98,6 +102,7 @@ export default function ShopStock() {
         body: JSON.stringify({
           sessionType,
           staffName,
+          shiftId: currentShift?.id,
           entries: entriesList,
         }),
       });

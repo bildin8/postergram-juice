@@ -1767,16 +1767,44 @@ router.post('/local-buy-tasks/:id/cancel', async (req, res) => {
 // ============================================================================
 
 // Get all items
+// Get all items (from operational schema)
 router.get('/items', async (req, res) => {
     try {
+        // Fetch from op_ingredients and join with stock view data
         const { data, error } = await supabaseAdmin
-            .from('store_items')
+            .from('op_ingredients')
             .select('*')
             .eq('is_active', true)
             .order('name');
 
         if (error) throw error;
-        res.json(data || []);
+
+        // Also fetch stock levels to complement the data
+        const { data: stockData } = await supabaseAdmin
+            .from('v_op_ingredient_stock')
+            .select('*');
+
+        const stockMap = new Map(stockData?.map(s => [s.id, s]) || []);
+
+        // Transform to match the frontend expected StoreItem interface
+        const result = (data || []).map(item => {
+            const stock = stockMap.get(item.id);
+            return {
+                id: item.id,
+                name: item.name,
+                category: item.category || 'general',
+                unit: item.unit,
+                min_stock: item.min_stock_level || 0,
+                current_stock: stock ? (stock.store_stock + stock.shop_stock) : 0,
+                cost_per_unit: item.last_cost || 0,
+                is_active: item.is_active,
+                bought_by: 'store', // Default in new schema
+                store_stock: stock?.store_stock || 0,
+                shop_stock: stock?.shop_stock || 0
+            };
+        });
+
+        res.json(result);
     } catch (error: any) {
         log(`Error fetching items: ${error.message}`);
         res.status(500).json({ message: 'Failed to fetch items' });
@@ -1791,16 +1819,21 @@ router.post('/items', async (req, res) => {
             category: z.string().default('general'),
             unit: z.string().default('pcs'),
             min_stock: z.number().default(0),
-            current_stock: z.number().default(0),
             cost_per_unit: z.number().optional(),
-            bought_by: z.enum(['store', 'shop']).default('store'),
         });
 
         const data = schema.parse(req.body);
 
         const { data: item, error } = await supabaseAdmin
-            .from('store_items')
-            .insert(data)
+            .from('op_ingredients')
+            .insert({
+                name: data.name,
+                category: data.category,
+                unit: data.unit,
+                min_stock_level: data.min_stock,
+                last_cost: data.cost_per_unit || 0,
+                is_active: true
+            })
             .select()
             .single();
 
@@ -1821,16 +1854,21 @@ router.put('/items/:id', async (req, res) => {
             category: z.string(),
             unit: z.string(),
             min_stock: z.number(),
-            current_stock: z.number(),
             cost_per_unit: z.number().optional(),
-            bought_by: z.enum(['store', 'shop']),
         });
 
         const data = schema.parse(req.body);
 
         const { data: item, error } = await supabaseAdmin
-            .from('store_items')
-            .update({ ...data, updated_at: new Date().toISOString() })
+            .from('op_ingredients')
+            .update({
+                name: data.name,
+                category: data.category,
+                unit: data.unit,
+                min_stock_level: data.min_stock,
+                last_cost: data.cost_per_unit || 0,
+                updated_at: new Date().toISOString()
+            })
             .eq('id', id)
             .select()
             .single();
@@ -1849,7 +1887,7 @@ router.delete('/items/:id', async (req, res) => {
         const { id } = req.params;
 
         const { error } = await supabaseAdmin
-            .from('store_items')
+            .from('op_ingredients')
             .update({ is_active: false })
             .eq('id', id);
 
@@ -1874,14 +1912,13 @@ router.post('/items/sync-from-pos', async (req, res) => {
         const data = schema.parse(req.body);
 
         const { data: item, error } = await supabaseAdmin
-            .from('store_items')
-            .insert({
+            .from('op_ingredients')
+            .upsert({
+                poster_ingredient_id: data.posterPosId.toString(),
                 name: data.name,
                 unit: data.unit,
-                current_stock: data.currentStock,
-                category: 'posterpos',
-                bought_by: 'store',
-            })
+                is_active: true
+            }, { onConflict: 'poster_ingredient_id' })
             .select()
             .single();
 
@@ -1907,23 +1944,22 @@ router.post('/items/bulk-sync', async (req, res) => {
 
         const { items } = schema.parse(req.body);
 
-        const insertData = items.map(item => ({
+        const upsertData = items.map(item => ({
+            poster_ingredient_id: item.posterPosId.toString(),
             name: item.name,
             unit: item.unit,
-            current_stock: item.currentStock,
-            category: 'posterpos',
-            bought_by: 'store',
+            is_active: true
         }));
 
         const { data, error } = await supabaseAdmin
-            .from('store_items')
-            .insert(insertData)
+            .from('op_ingredients')
+            .upsert(upsertData, { onConflict: 'poster_ingredient_id' })
             .select();
 
         if (error) throw error;
         res.status(201).json(data);
     } catch (error: any) {
-        log(`Error bulk syncing items from POS: ${error.message}`);
+        log(`Error bulk syncing from POS: ${error.message}`);
         res.status(500).json({ message: 'Failed to bulk sync items' });
     }
 });

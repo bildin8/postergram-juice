@@ -745,16 +745,14 @@ router.get('/stock/sessions/today', async (req, res) => {
     }
 });
 
-// Get common items for quick add
+// Get common items for quick add (from operational schema)
 router.get('/stock/common-items', async (req, res) => {
     try {
         const { data, error } = await supabaseAdmin
-            .from('store_items')
+            .from('op_ingredients')
             .select('id, name, unit, category')
             .eq('is_active', true)
-            .eq('requires_counting', true)
-            .order('name')
-            .limit(100);
+            .order('name');
 
         if (error) throw error;
         res.json(data || []);
@@ -764,42 +762,47 @@ router.get('/stock/common-items', async (req, res) => {
     }
 });
 
-// Create stock session
-router.post('/stock/sessions', async (req, res) => {
+// Get today's sessions (using op_stock_counts)
+router.get('/stock/sessions/today', async (req, res) => {
     try {
-        const schema = z.object({
-            sessionType: z.enum(['opening', 'closing']),
-            staffName: z.string(),
-        });
-
-        const data = schema.parse(req.body);
-
-        const { data: session, error } = await supabaseAdmin
-            .from('shop_stock_sessions')
-            .insert({
-                session_type: data.sessionType,
-                staff_name: data.staffName,
-                status: 'in_progress',
-            })
-            .select()
-            .single();
+        const today = new Date().toISOString().split('T')[0];
+        const { data, error } = await supabaseAdmin
+            .from('op_stock_counts')
+            .select('*')
+            .eq('location', 'shop')
+            .gte('counted_at', today)
+            .order('counted_at', { ascending: false });
 
         if (error) throw error;
-        res.status(201).json(session);
+
+        // Transform for frontend if needed (the frontend expects session_type, staff_name, status, etc.)
+        const result = (data || []).map(s => ({
+            id: s.id,
+            session_type: s.count_type,
+            status: s.status,
+            staff_name: s.counted_by,
+            started_at: s.counted_at,
+            total_items: 0, // We don't have this in op_stock_counts, but could join
+            counted_items: 0,
+        }));
+
+        res.json(result);
     } catch (error: any) {
-        log(`Error creating stock session: ${error.message}`);
-        res.status(500).json({ message: 'Failed to create session' });
+        log(`Error fetching today's sessions: ${error.message}`);
+        res.status(500).json({ message: 'Failed to fetch sessions' });
     }
 });
 
-// Save stock entries
+// Save stock entries (using op_stock_counts and op_stock_count_items)
 router.post('/stock/entries', async (req, res) => {
     try {
         const schema = z.object({
             sessionId: z.string().uuid().optional(),
-            sessionType: z.enum(['opening', 'closing']),
+            sessionType: z.enum(['opening', 'closing', 'ad_hoc']),
             staffName: z.string(),
+            shiftId: z.string().uuid().optional(),
             entries: z.array(z.object({
+                ingredientId: z.string().uuid().optional(),
                 itemName: z.string(),
                 quantity: z.number(),
                 unit: z.string(),
@@ -809,53 +812,39 @@ router.post('/stock/entries', async (req, res) => {
 
         const data = schema.parse(req.body);
 
-        // Create session if not provided
-        let sessionId = data.sessionId;
-        if (!sessionId) {
-            const { data: session, error: sessionError } = await supabaseAdmin
-                .from('shop_stock_sessions')
-                .insert({
-                    session_type: data.sessionType,
-                    staff_name: data.staffName,
-                    status: 'completed',
-                    total_items: data.entries.length,
-                    counted_items: data.entries.length,
-                    completed_at: new Date().toISOString(),
-                })
-                .select()
-                .single();
+        // 1. Create stock count session
+        const { data: session, error: sessionError } = await supabaseAdmin
+            .from('op_stock_counts')
+            .insert({
+                location: 'shop',
+                count_type: data.sessionType,
+                counted_by: data.staffName,
+                shift_id: data.shiftId || null,
+                status: 'completed',
+                completed_at: new Date().toISOString(),
+            })
+            .select()
+            .single();
 
-            if (sessionError) throw sessionError;
-            sessionId = session.id;
-        }
+        if (sessionError) throw sessionError;
 
-        // Insert entries
+        // 2. Insert entries
         const entryInserts = data.entries.map(entry => ({
-            session_id: sessionId,
-            item_name: entry.itemName,
-            quantity: entry.quantity,
+            stock_count_id: session.id,
+            ingredient_id: entry.ingredientId,
+            ingredient_name: entry.itemName,
+            counted_quantity: entry.quantity,
             unit: entry.unit,
             notes: entry.notes,
         }));
 
         const { error: entriesError } = await supabaseAdmin
-            .from('shop_stock_entries')
+            .from('op_stock_count_items')
             .insert(entryInserts);
 
         if (entriesError) throw entriesError;
 
-        // Update session as completed
-        await supabaseAdmin
-            .from('shop_stock_sessions')
-            .update({
-                status: 'completed',
-                total_items: data.entries.length,
-                counted_items: data.entries.length,
-                completed_at: new Date().toISOString(),
-            })
-            .eq('id', sessionId);
-
-        res.json({ success: true, sessionId, entriesCount: data.entries.length });
+        res.json({ success: true, sessionId: session.id, entriesCount: data.entries.length });
     } catch (error: any) {
         log(`Error saving stock entries: ${error.message}`);
         res.status(500).json({ message: 'Failed to save entries' });
