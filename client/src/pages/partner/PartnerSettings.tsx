@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import {
     Settings as SettingsIcon, Shield, DollarSign, Clock, Bell,
-    Save, ArrowLeft, Users, AlertTriangle
+    Save, ArrowLeft, Users, AlertTriangle, Database, RefreshCw
 } from 'lucide-react';
 import { Link } from 'wouter';
 
@@ -72,6 +72,24 @@ export default function PartnerSettings() {
         onError: () => {
             toast({ title: 'Error', description: 'Failed to save settings', variant: 'destructive' });
         },
+    });
+
+    const backfillMutation = useMutation({
+        mutationFn: async (days: number) => {
+            const res = await fetch('/api/op/sync/backfill', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ days }),
+            });
+            if (!res.ok) throw new Error('Backfill failed');
+            return res.json();
+        },
+        onSuccess: (data) => {
+            toast({ title: 'Backfill Complete', description: data.message });
+        },
+        onError: (err) => {
+            toast({ title: 'Backfill Error', description: err.message, variant: 'destructive' });
+        }
     });
 
     const handleSave = (key: keyof Settings) => {
@@ -141,6 +159,10 @@ export default function PartnerSettings() {
                         <TabsTrigger value="alerts" className="data-[state=active]:bg-amber-600">
                             <Bell className="h-4 w-4 mr-2" />
                             Alerts
+                        </TabsTrigger>
+                        <TabsTrigger value="maintenance" className="data-[state=active]:bg-slate-600">
+                            <Database className="h-4 w-4 mr-2" />
+                            Maintenance
                         </TabsTrigger>
                     </TabsList>
 
@@ -411,13 +433,65 @@ export default function PartnerSettings() {
                                     disabled={updateMutation.isPending}
                                 >
                                     <Save className="h-4 w-4 mr-2" />
-                                    Save Alert Settings
                                 </Button>
+                            </CardContent>
+                        </Card>
+                    </TabsContent>
+
+                    {/* Maintenance Tab */}
+                    <TabsContent value="maintenance" className="mt-6">
+                        <Card className="bg-slate-800/50 border-slate-700">
+                            <CardHeader>
+                                <CardTitle className="text-white flex items-center gap-2">
+                                    <Database className="h-5 w-5 text-slate-400" />
+                                    System Maintenance
+                                </CardTitle>
+                                <CardDescription className="text-slate-400">
+                                    Data synchronization and system health
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-6">
+                                <div className="p-4 bg-slate-900/50 rounded-lg border border-slate-700">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div>
+                                            <h3 className="text-white font-medium flex items-center gap-2">
+                                                <RefreshCw className="h-4 w-4 text-blue-400" />
+                                                Historical Data Backfill
+                                            </h3>
+                                            <p className="text-sm text-slate-400 mt-1">
+                                                Force synchronization of transactions from Poster POS for the last 10 days.
+                                                Use this if reports are missing data.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <Button
+                                        onClick={() => backfillMutation.mutate(10)}
+                                        disabled={backfillMutation.isPending}
+                                        className="bg-blue-600 hover:bg-blue-700"
+                                    >
+                                        {backfillMutation.isPending ? (
+                                            <>
+                                                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                                                Syncing...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <RefreshCw className="h-4 w-4 mr-2" />
+                                                Sync Last 10 Days
+                                            </>
+                                        )}
+                                    </Button>
+                                    {backfillMutation.isSuccess && (
+                                        <p className="text-emerald-400 text-sm mt-2 flex items-center gap-1">
+                                            <Shield className="h-3 w-3" /> Sync completed successfully.
+                                        </p>
+                                    )}
+                                </div>
                             </CardContent>
                         </Card>
                     </TabsContent>
                 </Tabs>
             </div>
-        </div>
+        </div >
     );
 }

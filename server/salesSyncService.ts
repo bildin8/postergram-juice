@@ -114,59 +114,16 @@ export async function syncTransactions(): Promise<SyncResult> {
 
         let maxCloseTimestamp = status.lastSyncTimestamp || 0;
 
+
         for (const transaction of transactions) {
             try {
-                // Calculate close timestamp for incremental sync tracking
-                const closeTimestamp = parseCloseTimestamp(transaction.date_close);
-                if (closeTimestamp > maxCloseTimestamp) {
-                    maxCloseTimestamp = closeTimestamp;
+                // Process transaction
+                const processed = await processTransaction(transaction, result);
+                if (processed) {
+                    if (parseCloseTimestamp(transaction.date_close) > maxCloseTimestamp) {
+                        maxCloseTimestamp = parseCloseTimestamp(transaction.date_close);
+                    }
                 }
-
-                // Skip if no products
-                if (!transaction.products || transaction.products.length === 0) {
-                    continue;
-                }
-
-                // Check if already synced (idempotent)
-                const { data: existing } = await supabaseAdmin
-                    .from('op_synced_transactions')
-                    .select('id')
-                    .eq('poster_transaction_id', transaction.transaction_id)
-                    .single();
-
-                if (existing) {
-                    continue; // Already synced
-                }
-
-                // Store raw transaction
-                const { data: syncedTx, error: txError } = await supabaseAdmin
-                    .from('op_synced_transactions')
-                    .insert({
-                        poster_transaction_id: transaction.transaction_id,
-                        transaction_date: parseCloseDate(transaction.date_close).toISOString(),
-                        total_amount: parseFloat(transaction.payed_sum || transaction.sum || '0') / 100,
-                        pay_type: getPayType(transaction.pay_type),
-                        payed_cash: parseFloat(transaction.payed_cash || '0') / 100,
-                        payed_card: parseFloat(transaction.payed_card || '0') / 100,
-                        products: transaction.products,
-                    })
-                    .select()
-                    .single();
-
-                if (txError) {
-                    result.errors.push(`Transaction ${transaction.transaction_id}: ${txError.message}`);
-                    continue;
-                }
-
-                result.transactionsSynced++;
-
-                // Calculate and store consumption
-                const consumptionCount = await calculateAndStoreConsumption(syncedTx.id, transaction.products);
-                result.consumptionRecordsCreated += consumptionCount;
-
-                // Send Telegram notification for new sales
-                await sendSaleNotification(transaction);
-
             } catch (txError: any) {
                 result.errors.push(`Transaction ${transaction.transaction_id}: ${txError.message}`);
             }
@@ -191,6 +148,118 @@ export async function syncTransactions(): Promise<SyncResult> {
     }
 
     return result;
+}
+
+export async function backfillTransactions(days: number): Promise<SyncResult> {
+    const result: SyncResult = {
+        success: true,
+        transactionsSynced: 0,
+        consumptionRecordsCreated: 0,
+        errors: [],
+    };
+
+    if (!isPosterPOSInitialized()) {
+        log('PosterPOS not initialized, skipping backfill', 'sales-sync');
+        return result;
+    }
+
+    try {
+        log(`Starting backfill for last ${days} days`, 'sales-sync');
+        await updateSyncStatus({ status: 'syncing' });
+
+        const client = getPosterPOSClient();
+
+        // Calculate timestamp for N days ago
+        const date = new Date();
+        date.setDate(date.getDate() - days);
+        const timestamp = Math.floor(date.getTime() / 1000); // PosterPOS uses seconds
+
+        log(`Fetching transactions since ${date.toISOString()} (timestamp: ${timestamp})`, 'sales-sync');
+
+        // Use getTransactionsSince with explicit timestamp
+        const transactions = await client.getTransactionsSince(timestamp);
+
+        log(`Found ${transactions.length} transactions for backfill`, 'sales-sync');
+
+        for (const transaction of transactions) {
+            try {
+                await processTransaction(transaction, result);
+            } catch (txError: any) {
+                result.errors.push(`Transaction ${transaction.transaction_id}: ${txError.message}`);
+            }
+        }
+
+        // We don't necessarily update 'lastSyncTimestamp' here because backfill might be older than current sync head.
+        // But we should update status to idle.
+        await updateSyncStatus({
+            status: 'idle',
+            errorMessage: result.errors.length > 0 ? result.errors.join('; ') : null,
+        });
+
+        log(`Backfill complete: ${result.transactionsSynced} new transactions imported`, 'sales-sync');
+
+    } catch (error: any) {
+        result.success = false;
+        result.errors.push(error.message);
+        await updateSyncStatus({ status: 'error', errorMessage: error.message });
+        log(`Backfill failed: ${error.message}`, 'sales-sync');
+    }
+
+    return result;
+}
+
+async function processTransaction(transaction: PosterPOSTransaction, result: SyncResult): Promise<boolean> {
+    // Skip if no products
+    if (!transaction.products || transaction.products.length === 0) {
+        return false;
+    }
+
+    // Check if already synced (idempotent)
+    const { data: existing } = await supabaseAdmin
+        .from('op_synced_transactions')
+        .select('id')
+        .eq('poster_transaction_id', transaction.transaction_id)
+        .single();
+
+    if (existing) {
+        return false; // Already synced
+    }
+
+    // Store raw transaction
+    const { data: syncedTx, error: txError } = await supabaseAdmin
+        .from('op_synced_transactions')
+        .insert({
+            poster_transaction_id: transaction.transaction_id,
+            transaction_date: parseCloseDate(transaction.date_close).toISOString(),
+            total_amount: parseFloat(transaction.payed_sum || transaction.sum || '0') / 100,
+            pay_type: getPayType(transaction.pay_type),
+            payed_cash: parseFloat(transaction.payed_cash || '0') / 100,
+            payed_card: parseFloat(transaction.payed_card || '0') / 100,
+            products: transaction.products,
+        })
+        .select()
+        .single();
+
+    if (txError) {
+        result.errors.push(`Transaction ${transaction.transaction_id}: ${txError.message}`);
+        return false;
+    }
+
+    result.transactionsSynced++;
+
+    // Calculate and store consumption
+    const consumptionCount = await calculateAndStoreConsumption(syncedTx.id, transaction.products);
+    result.consumptionRecordsCreated += consumptionCount;
+
+    // Send Telegram notification for new sales
+    // Only send notification if it's recent (e.g. within last hour), otherwise backfill spams channel
+    const closeDate = parseCloseDate(transaction.date_close);
+    const ageInHours = (Date.now() - closeDate.getTime()) / (1000 * 60 * 60);
+    if (ageInHours < 1) {
+        await sendSaleNotification(transaction);
+    }
+
+    return true;
 }
 
 // ============================================================================

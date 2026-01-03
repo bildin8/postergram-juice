@@ -10,7 +10,8 @@ import {
     syncRecipes,
     getSyncStatus,
     startSalesSync,
-    stopSalesSync
+    stopSalesSync,
+    backfillTransactions
 } from './salesSyncService';
 import {
     calculateDailyReconciliation,
@@ -98,8 +99,8 @@ router.post('/sync/backfill', async (req: Request, res: Response) => {
         const recipeResult = await syncRecipes();
         log(`Recipes synced: ${recipeResult.recipesUpserted}`, 'sales-sync');
 
-        // Then sync transactions
-        const txResult = await syncTransactions();
+        // Then sync transactions using backfill to force last N days
+        const txResult = await backfillTransactions(daysNum);
 
         res.json({
             success: true,
