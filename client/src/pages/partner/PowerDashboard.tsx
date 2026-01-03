@@ -76,8 +76,13 @@ export default function PowerDashboard() {
     const { data: transactions = [], isLoading: txLoading } = useQuery<Transaction[]>({
         queryKey: ['op-transactions', refreshKey],
         queryFn: async () => {
-            const res = await fetch('/api/op/transactions?limit=20');
-            return res.json();
+            try {
+                const res = await fetch('/api/op/transactions?limit=20');
+                if (!res.ok) return [];
+                return res.json();
+            } catch (e) {
+                return [];
+            }
         },
         refetchInterval: 30000,
     });
@@ -85,8 +90,13 @@ export default function PowerDashboard() {
     const { data: todaySummary } = useQuery({
         queryKey: ['op-transactions-summary', refreshKey],
         queryFn: async () => {
-            const res = await fetch('/api/op/transactions/summary');
-            return res.json();
+            try {
+                const res = await fetch('/api/op/transactions/summary');
+                if (!res.ok) return null;
+                return res.json();
+            } catch (e) {
+                return null;
+            }
         },
         refetchInterval: 60000,
     });
@@ -94,8 +104,13 @@ export default function PowerDashboard() {
     const { data: stock = [] } = useQuery<StockItem[]>({
         queryKey: ['op-stock', refreshKey],
         queryFn: async () => {
-            const res = await fetch('/api/op/ingredients/stock');
-            return res.json();
+            try {
+                const res = await fetch('/api/op/ingredients/stock');
+                if (!res.ok) return [];
+                return res.json();
+            } catch (e) {
+                return [];
+            }
         },
         refetchInterval: 120000,
     });
@@ -103,8 +118,13 @@ export default function PowerDashboard() {
     const { data: syncStatus } = useQuery<SyncStatus>({
         queryKey: ['op-sync-status', refreshKey],
         queryFn: async () => {
-            const res = await fetch('/api/op/sync/status');
-            return res.json();
+            try {
+                const res = await fetch('/api/op/sync/status');
+                if (!res.ok) return { transactions: { status: 'unknown' }, recipes: { status: 'unknown' } };
+                return res.json();
+            } catch (e) {
+                return { transactions: { status: 'unknown' }, recipes: { status: 'unknown' } };
+            }
         },
         refetchInterval: 60000,
     });
@@ -112,9 +132,13 @@ export default function PowerDashboard() {
     const { data: pendingReorders = [] } = useQuery({
         queryKey: ['op-reorders-pending', refreshKey],
         queryFn: async () => {
-            const res = await fetch('/api/op/reorders/pending');
-            if (!res.ok) return [];
-            return res.json();
+            try {
+                const res = await fetch('/api/op/reorders/pending');
+                if (!res.ok) return [];
+                return res.json();
+            } catch (e) {
+                return [];
+            }
         },
         refetchInterval: 120000,
     });
@@ -126,24 +150,39 @@ export default function PowerDashboard() {
     const { data: dailyHistory = [], isLoading: historyLoading } = useQuery<DailySummary[]>({
         queryKey: ['op-reports-daily', reportDays, refreshKey],
         queryFn: async () => {
-            const res = await fetch(`/api/op/reports/daily-summary?days=${reportDays}`);
-            return res.json();
+            try {
+                const res = await fetch(`/api/op/reports/daily-summary?days=${reportDays}`);
+                if (!res.ok) return [];
+                return res.json();
+            } catch (e) {
+                return [];
+            }
         },
     });
 
     const { data: topSellers = [] } = useQuery({
         queryKey: ['op-reports-sellers', reportDays, refreshKey],
         queryFn: async () => {
-            const res = await fetch(`/api/op/reports/top-sellers?days=${reportDays}`);
-            return res.json();
+            try {
+                const res = await fetch(`/api/op/reports/top-sellers?days=${reportDays}`);
+                if (!res.ok) return [];
+                return res.json();
+            } catch (e) {
+                return [];
+            }
         },
     });
 
     const { data: consumptionTrends } = useQuery({
         queryKey: ['op-reports-consumption', reportDays, refreshKey],
         queryFn: async () => {
-            const res = await fetch(`/api/op/reports/consumption-trends?days=${reportDays}`);
-            return res.json();
+            try {
+                const res = await fetch(`/api/op/reports/consumption-trends?days=${reportDays}`);
+                if (!res.ok) return {};
+                return res.json();
+            } catch (e) {
+                return {};
+            }
         },
     });
 
@@ -311,7 +350,7 @@ export default function PowerDashboard() {
                                                 <div key={tx.id} className="p-4 hover:bg-slate-800/30 transition-colors flex items-center justify-between group">
                                                     <div className="flex items-center gap-4">
                                                         <div className={`h-10 w-10 rounded-full flex items-center justify-center font-bold text-xs ${tx.pay_type === 'cash' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' :
-                                                                'bg-blue-500/10 text-blue-500 border border-blue-500/20'
+                                                            'bg-blue-500/10 text-blue-500 border border-blue-500/20'
                                                             }`}>
                                                             {tx.pay_type === 'cash' ? 'C' : 'D'}
                                                         </div>

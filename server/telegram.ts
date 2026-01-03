@@ -14,6 +14,18 @@ export class TelegramBotService {
       this.setupWebhook();
     } else {
       this.bot = new TelegramBot(token, { polling: true });
+
+      // Graceful handling of polling conflicts (dev mode / multi-instance)
+      this.bot.on('polling_error', (error: any) => {
+        // 409 Conflict: Terminated by other getUpdates request
+        if (error.code === 'ETELEGRAM' && error.message.includes('409 Conflict')) {
+          log('⚠️ Telegram polling conflict detected. Stopping polling on this instance to allow the other instance to work.', 'telegram');
+          this.bot.stopPolling();
+        } else {
+          // Log other polling errors but don't crash
+          log(`Telegram polling error: ${error.message}`, 'telegram');
+        }
+      });
     }
 
     this.setupCommands();
