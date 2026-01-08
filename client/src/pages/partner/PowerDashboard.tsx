@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { secureFetch } from '@/lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -84,7 +85,7 @@ export default function PowerDashboard() {
         queryKey: ['op-transactions', refreshKey],
         queryFn: async () => {
             try {
-                const res = await fetch('/api/op/transactions?limit=20');
+                const res = await secureFetch('/api/op/transactions?limit=20');
                 if (!res.ok) return [];
                 return res.json();
             } catch (e) {
@@ -98,7 +99,7 @@ export default function PowerDashboard() {
         queryKey: ['op-transactions-summary', refreshKey],
         queryFn: async () => {
             try {
-                const res = await fetch('/api/op/transactions/summary');
+                const res = await secureFetch('/api/op/transactions/summary');
                 if (!res.ok) return null;
                 return res.json();
             } catch (e) {
@@ -112,7 +113,7 @@ export default function PowerDashboard() {
         queryKey: ['op-stock', refreshKey],
         queryFn: async () => {
             try {
-                const res = await fetch('/api/op/ingredients/stock');
+                const res = await secureFetch('/api/op/ingredients/stock');
                 if (!res.ok) return [];
                 return res.json();
             } catch (e) {
@@ -126,7 +127,7 @@ export default function PowerDashboard() {
         queryKey: ['op-sync-status', refreshKey],
         queryFn: async () => {
             try {
-                const res = await fetch('/api/op/sync/status');
+                const res = await secureFetch('/api/op/sync/status');
                 if (!res.ok) return { transactions: { status: 'unknown' }, recipes: { status: 'unknown' } };
                 return res.json();
             } catch (e) {
@@ -140,7 +141,7 @@ export default function PowerDashboard() {
         queryKey: ['op-reorders-pending', refreshKey],
         queryFn: async () => {
             try {
-                const res = await fetch('/api/op/reorders/pending');
+                const res = await secureFetch('/api/op/reorders/pending');
                 if (!res.ok) return [];
                 return res.json();
             } catch (e) {
@@ -158,7 +159,7 @@ export default function PowerDashboard() {
         queryKey: ['op-reports-daily', reportDays, refreshKey],
         queryFn: async () => {
             try {
-                const res = await fetch(`/api/op/reports/daily-summary?days=${reportDays}`);
+                const res = await secureFetch(`/api/op/reports/daily-summary?days=${reportDays}`);
                 if (!res.ok) return [];
                 return res.json();
             } catch (e) {
@@ -171,7 +172,7 @@ export default function PowerDashboard() {
         queryKey: ['op-reports-sellers', reportDays, refreshKey],
         queryFn: async () => {
             try {
-                const res = await fetch(`/api/op/reports/top-sellers?days=${reportDays}`);
+                const res = await secureFetch(`/api/op/reports/top-sellers?days=${reportDays}`);
                 if (!res.ok) return [];
                 return res.json();
             } catch (e) {
@@ -184,7 +185,7 @@ export default function PowerDashboard() {
         queryKey: ['op-reports-consumption', reportDays, refreshKey],
         queryFn: async () => {
             try {
-                const res = await fetch(`/api/op/reports/consumption-trends?days=${reportDays}`);
+                const res = await secureFetch(`/api/op/reports/consumption-trends?days=${reportDays}`);
                 if (!res.ok) return {};
                 return res.json();
             } catch (e) {

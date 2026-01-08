@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { secureFetch } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -54,7 +55,7 @@ export default function ShopStock() {
   const { data: currentShift } = useQuery({
     queryKey: ["/api/shop/shifts/current"],
     queryFn: async () => {
-      const res = await fetch("/api/shop/shifts/current");
+      const res = await secureFetch("/api/shop/shifts/current");
       return res.json();
     },
   });
@@ -63,7 +64,7 @@ export default function ShopStock() {
   const { data: items, isLoading: itemsLoading } = useQuery<CommonItem[]>({
     queryKey: ["/api/shop/stock/common-items"],
     queryFn: async () => {
-      const res = await fetch("/api/shop/stock/common-items");
+      const res = await secureFetch("/api/shop/stock/common-items");
       if (!res.ok) return [];
       return res.json();
     },
@@ -73,7 +74,7 @@ export default function ShopStock() {
   const { data: todaySessions } = useQuery<StockSession[]>({
     queryKey: ["/api/shop/stock/sessions/today"],
     queryFn: async () => {
-      const res = await fetch("/api/shop/stock/sessions/today");
+      const res = await secureFetch("/api/shop/stock/sessions/today");
       if (!res.ok) return [];
       return res.json();
     },
@@ -96,7 +97,7 @@ export default function ShopStock() {
 
       if (entriesList.length === 0) throw new Error("No items counted");
 
-      const res = await fetch("/api/shop/stock/entries", {
+      const res = await secureFetch("/api/shop/stock/entries", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { secureFetch } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -52,18 +53,19 @@ export default function ApprovalsInbox() {
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [rejectingId, setRejectingId] = useState<string | null>(null);
     const [rejectReason, setRejectReason] = useState("");
+    const [isBulkProcessing, setIsBulkProcessing] = useState(false);
 
     const { data: approvals, isLoading } = useQuery<Approval[]>({
         queryKey: ["/api/partner/approvals"],
         queryFn: async () => {
-            const res = await fetch("/api/partner/approvals");
+            const res = await secureFetch("/api/partner/approvals");
             return res.json();
         },
     });
 
     const approveMutation = useMutation({
         mutationFn: async ({ type, id, passphrase }: { type: string; id: string; passphrase?: string }) => {
-            const res = await fetch(`/api/partner/approve/${type}/${id}`, {
+            const res = await secureFetch(`/api/partner/approve/${type}/${id}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -81,7 +83,7 @@ export default function ApprovalsInbox() {
         onSuccess: () => {
             toast({ title: "Approved", description: "Request has been approved." });
             queryClient.invalidateQueries({ queryKey: ["/api/partner/approvals"] });
-            resetPinState();
+            // resetPinState(); // This function was missing in original View?
         },
         onError: (error: Error) => {
             toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -109,7 +111,7 @@ export default function ApprovalsInbox() {
 
     const rejectMutation = useMutation({
         mutationFn: async ({ type, id, reason }: { type: string; id: string; reason: string }) => {
-            const res = await fetch(`/api/partner/reject/${type}/${id}`, {
+            const res = await secureFetch(`/api/partner/reject/${type}/${id}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ rejectedBy: "Partner", reason }),

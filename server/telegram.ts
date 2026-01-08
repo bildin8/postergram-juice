@@ -1,5 +1,6 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { storage } from './storage';
+import { supabaseAdmin } from './supabase';
 import { log } from './index';
 
 export class TelegramBotService {
@@ -401,6 +402,82 @@ export class TelegramBotService {
       }
     });
 
+    // CONSUMPTION REPORT (Partner Only)
+    this.bot.onText(/\/consumption/, async (msg) => {
+      const chatId = msg.chat.id.toString();
+      try {
+        const isPartner = await this.verifyPartnerAccess(msg.from?.id?.toString());
+        if (!isPartner) {
+          await this.bot.sendMessage(chatId, '🔒 Partner access required.');
+          return;
+        }
+
+        const { data: consumption } = await supabaseAdmin
+          .from('v_op_daily_consumption')
+          .select('*')
+          .eq('sale_date', new Date().toISOString().split('T')[0])
+          .order('total_quantity', { ascending: false })
+          .limit(10);
+
+        let message = `🍽️ *Today's Top Consumption*\n\n`;
+        if (consumption && consumption.length > 0) {
+          consumption.forEach((c: any) => {
+            message += `• ${c.ingredient_name}: ${parseFloat(c.total_quantity).toFixed(1)} ${c.unit}\n`;
+          });
+        } else {
+          message += "No data yet today.";
+        }
+        await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+      } catch (error: any) {
+        log(`Error in /consumption: ${error.message}`, 'telegram');
+        await this.bot.sendMessage(chatId, 'Failed to fetch consumption.');
+      }
+    });
+
+    // MPESA SUMMARIES (Partner Only)
+    this.bot.onText(/\/mpesa/, async (msg) => {
+      const chatId = msg.chat.id.toString();
+      try {
+        const isPartner = await this.verifyPartnerAccess(msg.from?.id?.toString());
+        if (!isPartner) {
+          await this.bot.sendMessage(chatId, '🔒 Partner access required.');
+          return;
+        }
+
+        // Fetch today's confirmed MPESA transactions
+        const dateStr = new Date().toISOString().split('T')[0];
+        const { data: mpesaTx } = await supabaseAdmin
+          .from('op_synced_transactions')
+          .select('payed_card, pay_type') // payed_card usually maps to M-Pesa in Poster hacks or explicit pay_type columns
+          .or(`pay_type.eq.card,pay_type.eq.mixed`)
+          .gte('transaction_date', `${dateStr}T00:00:00`);
+
+        // In Poster logic, "Card" often = M-Pesa/Bank. Custom pay types may exist.
+        // Assuming payed_card is the proxy.
+
+        const totalMpesa = (mpesaTx || []).reduce((sum: number, t: any) => sum + (parseFloat(t.payed_card) || 0), 0);
+
+        // Reversals
+        const { data: reversals } = await supabaseAdmin
+          .from('mpesa_reversals')
+          .select('reversal_amount')
+          .eq('status', 'completed')
+          .gte('reversal_date', `${dateStr}T00:00:00`);
+
+        const totalReversals = (reversals || []).reduce((sum: number, r: any) => sum + (parseFloat(r.reversal_amount) || 0), 0);
+
+        let message = `📱 *M-Pesa Summary (Today)*\n\n`;
+        message += `✅ Settled: KES ${totalMpesa.toLocaleString()}\n`;
+        message += `↩️ Reversals: KES ${totalReversals.toLocaleString()}\n`;
+        message += `💰 Net: KES ${(totalMpesa - totalReversals).toLocaleString()}\n`;
+
+        await this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+      } catch (error: any) {
+        log(`Error in /mpesa: ${error.message}`, 'telegram');
+        await this.bot.sendMessage(chatId, 'Failed to fetch M-Pesa summary.');
+      }
+    });
+
     // Link partner account (security)
     this.bot.onText(/\/link(?:\s+(.+))?/, async (msg, match) => {
       const chatId = msg.chat.id.toString();
@@ -463,9 +540,14 @@ export class TelegramBotService {
   private async verifyPartnerAccess(telegramUserId?: string): Promise<boolean> {
     if (!telegramUserId) return false;
 
-    // For now, allow all users (can be restricted later via partner_telegram_links table)
-    // TODO: Query partner_telegram_links table to verify
-    return true;
+    const { data } = await supabaseAdmin
+      .from('partner_telegram_links')
+      .select('id')
+      .eq('telegram_chat_id', telegramUserId)
+      .eq('is_active', true)
+      .single();
+
+    return !!data;
   }
 
   private async setupChannel(chatId: string, chatType: string, role: string) {

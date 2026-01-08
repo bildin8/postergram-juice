@@ -1,5 +1,6 @@
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { secureFetch } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,9 @@ import {
     Square,
     Clock,
     CheckCircle2,
-    Circle
+    Home,
+    ArrowLeft,
+    Banknote
 } from "lucide-react";
 
 interface Shift {
@@ -40,7 +43,7 @@ export default function ShopHome() {
     const { data: currentShift, isLoading: shiftLoading } = useQuery<Shift | null>({
         queryKey: ["/api/shop/shifts/current"],
         queryFn: async () => {
-            const res = await fetch("/api/shop/shifts/current");
+            const res = await secureFetch("/api/shop/shifts/current");
             if (!res.ok) return null;
             return res.json();
         },
@@ -51,7 +54,7 @@ export default function ShopHome() {
     const { data: pendingDispatches } = useQuery({
         queryKey: ["/api/shop/pending-dispatches"],
         queryFn: async () => {
-            const res = await fetch("/api/shop/pending-dispatches");
+            const res = await secureFetch("/api/shop/pending-dispatches");
             return res.json();
         },
     });
@@ -60,12 +63,23 @@ export default function ShopHome() {
     const { data: localBuyTasks } = useQuery({
         queryKey: ["/api/shop/local-buy-tasks"],
         queryFn: async () => {
-            const res = await fetch("/api/shop/local-buy-tasks");
+            const res = await secureFetch("/api/shop/local-buy-tasks");
+            return res.json();
+        },
+    });
+
+    // Get today's expenses count
+    const { data: todaysExpenses } = useQuery({
+        queryKey: ["/api/shop/expenses/today"],
+        queryFn: async () => {
+            const res = await secureFetch("/api/shop/expenses/today");
+            if (!res.ok) return [];
             return res.json();
         },
     });
 
     const isShiftOpen = currentShift?.status === "open";
+    const expenseCount = Array.isArray(todaysExpenses) ? todaysExpenses.length : 0;
 
     const checklistItems: ChecklistItem[] = [
         {
@@ -118,6 +132,15 @@ export default function ShopHome() {
             count: localBuyTasks?.length || 0,
         },
         {
+            id: "cash-handover",
+            title: "Cash Handover",
+            description: "Transfer cash to owner or bank",
+            icon: Banknote,
+            href: "/shop/cash-handover",
+            completed: false,
+            requiresShift: true,
+        },
+        {
             id: "close-shift",
             title: "Close Shift",
             description: "End of day - record closing cash",
@@ -132,7 +155,13 @@ export default function ShopHome() {
         <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-slate-900 to-slate-900 p-6">
             <div className="max-w-4xl mx-auto">
                 {/* Header */}
-                <div className="mb-8">
+                <div className="mb-6">
+                    <Link href="/">
+                        <Button variant="ghost" className="text-slate-400 hover:text-white mb-4">
+                            <ArrowLeft className="h-4 w-4 mr-2" />
+                            Back to Home
+                        </Button>
+                    </Link>
                     <h1 className="text-3xl font-bold text-white mb-2">Shop Portal</h1>
                     <p className="text-slate-400">Daily operations checklist</p>
                 </div>
@@ -266,7 +295,7 @@ export default function ShopHome() {
                     <CardContent>
                         <div className="grid grid-cols-3 gap-4 text-center">
                             <div>
-                                <p className="text-2xl font-bold text-white">0</p>
+                                <p className="text-2xl font-bold text-white">{expenseCount}</p>
                                 <p className="text-sm text-slate-400">Expenses</p>
                             </div>
                             <div>

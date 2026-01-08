@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { secureFetch } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,7 +43,7 @@ export default function ShopExpenses() {
     const { data: todaysExpenses } = useQuery({
         queryKey: ["/api/shop/expenses/today"],
         queryFn: async () => {
-            const res = await fetch("/api/shop/expenses/today");
+            const res = await secureFetch("/api/shop/expenses/today");
             return res.json();
         },
     });
@@ -50,7 +51,7 @@ export default function ShopExpenses() {
     // Submit expense
     const submitMutation = useMutation({
         mutationFn: async () => {
-            const res = await fetch("/api/shop/expenses", {
+            const res = await secureFetch("/api/shop/expenses", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

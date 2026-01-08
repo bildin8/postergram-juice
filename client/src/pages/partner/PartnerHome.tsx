@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { secureFetch } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
     CheckCircle,
     Scale,
@@ -12,6 +13,7 @@ import {
     Settings,
     TrendingUp,
     ArrowRight,
+    ArrowLeft,
     AlertTriangle,
     Package,
     Boxes,
@@ -165,13 +167,19 @@ export default function PartnerHome() {
             href: "/partner/local-buys",
             color: "bg-indigo-600",
         },
-        // Store/Supply Chain Operations (Moved from Store Portal)
         {
-            title: "Supply Chain",
-            description: "Manage Purchases, Packing & Dispatch",
+            title: "Purchase Requests",
+            description: "Initiate supplier purchases",
             icon: Factory,
-            href: "/store", // Re-using Store Home as the entry point for now
+            href: "/partner/purchases",
             color: "bg-cyan-700",
+        },
+        {
+            title: "Dispatch Orders",
+            description: "Initiate Store → Shop transfers",
+            icon: Truck,
+            href: "/partner/dispatches",
+            color: "bg-violet-600",
         },
     ];
 
@@ -179,7 +187,13 @@ export default function PartnerHome() {
         <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-slate-900 to-slate-900 p-6">
             <div className="max-w-6xl mx-auto">
                 {/* Header */}
-                <div className="mb-8">
+                <div className="mb-6">
+                    <Link href="/">
+                        <Button variant="ghost" className="text-slate-400 hover:text-white mb-4">
+                            <ArrowLeft className="h-4 w-4 mr-2" />
+                            Back to Home
+                        </Button>
+                    </Link>
                     <h1 className="text-3xl font-bold text-white mb-2">Partner Portal</h1>
                     <p className="text-slate-400">Full visibility & control dashboard</p>
                 </div>

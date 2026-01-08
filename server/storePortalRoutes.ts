@@ -388,11 +388,19 @@ router.post('/production', async (req, res) => {
                 });
         }
 
-        // 3. Log the Production Event (using store_processed_items as a log or new table)
-        // store_processed_items is linked to purchase_items usually, but we can repurpose or make nullable.
-        // But the schema for store_processed_items expects `purchase_item_id`.
-        // We'll create a log in `evidence_attachments` or just rely on inventory history (if we had it).
-        // Let's rely on the inventory updates for now, and maybe log a 'generic' expense/usage note.
+        // 3. Log the Production Event
+        const { error: processedError } = await supabaseAdmin
+            .from('op_store_processed_items')
+            .insert({
+                item_name: data.outputName,
+                quantity_produced: data.outputQty,
+                unit: data.outputUnit,
+                processed_by: data.processedBy,
+                notes: data.notes,
+                status: 'ready'
+            });
+
+        if (processedError) log(`Error processing production item: ${processedError.message}`);
 
         res.json({ success: true, message: `Converted ${data.inputQty} of ${inputItem?.name} to ${data.outputQty} ${data.outputName}` });
 
@@ -436,7 +444,7 @@ router.get('/queue/production', async (req, res) => {
 router.get('/queue/ready', async (req, res) => {
     try {
         const { data, error } = await supabaseAdmin
-            .from('store_processed_items')
+            .from('op_store_processed_items')
             .select('*')
             .eq('status', 'ready')
             .order('processed_at', { ascending: true });

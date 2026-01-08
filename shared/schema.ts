@@ -1,335 +1,297 @@
-import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, decimal, boolean } from "drizzle-orm/pg-core";
-import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
+// ============================================================================
+// CORE TABLES (Legacy/Reference)
+// ============================================================================
+
+export const userSchema = z.object({
+  id: z.string().uuid().optional(),
+  username: z.string(),
+  password: z.string(),
 });
 
-export const inventoryItems = pgTable("inventory_items", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  posterPosId: varchar("poster_pos_id").unique(),
-  name: text("name").notNull(),
-  currentStock: decimal("current_stock", { precision: 10, scale: 2 }).notNull().default("0"),
-  minStock: decimal("min_stock", { precision: 10, scale: 2 }).notNull().default("0"),
-  unit: text("unit").notNull().default("units"),
-  lastSyncedAt: timestamp("last_synced_at"),
+export const inventoryItemSchema = z.object({
+  id: z.string().uuid().optional(),
+  posterPosId: z.string().optional().nullable(),
+  name: z.string(),
+  currentStock: z.string().default("0"),
+  minStock: z.string().default("0"),
+  unit: z.string().default("units"),
+  lastSyncedAt: z.string().datetime().optional().nullable(),
 });
 
-export const salesRecords = pgTable("sales_records", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  posterPosId: varchar("poster_pos_id").unique(),
-  itemName: text("item_name").notNull(),
-  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
-  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
-  timestamp: timestamp("timestamp").notNull().defaultNow(),
-  syncedAt: timestamp("synced_at").notNull().defaultNow(),
+export const salesRecordSchema = z.object({
+  id: z.string().uuid().optional(),
+  posterPosId: z.string().optional().nullable(),
+  itemName: z.string(),
+  quantity: z.string(),
+  amount: z.string(),
+  timestamp: z.string().datetime().optional(),
+  syncedAt: z.string().datetime().optional(),
 });
 
-export const despatchLogs = pgTable("despatch_logs", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  inventoryItemId: varchar("inventory_item_id").references(() => inventoryItems.id),
-  itemName: text("item_name").notNull(),
-  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
-  destination: text("destination").notNull(),
-  createdBy: text("created_by").notNull(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+export const despatchLogSchema = z.object({
+  id: z.string().uuid().optional(),
+  inventoryItemId: z.string().uuid().optional().nullable(),
+  itemName: z.string(),
+  quantity: z.string(),
+  destination: z.string(),
+  createdBy: z.string(),
+  createdAt: z.string().datetime().optional(),
 });
 
-export const reorderRequests = pgTable("reorder_requests", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  itemName: text("item_name").notNull(),
-  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
-  unit: text("unit").notNull(),
-  estimatedCost: decimal("estimated_cost", { precision: 10, scale: 2 }),
-  vendor: text("vendor"),
-  notes: text("notes"),
-  requester: text("requester").notNull(),
-  status: text("status").notNull().default("pending"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  approvedAt: timestamp("approved_at"),
-  approvedBy: text("approved_by"),
+export const reorderRequestSchema = z.object({
+  id: z.string().uuid().optional(),
+  itemName: z.string(),
+  quantity: z.string(),
+  unit: z.string(),
+  estimatedCost: z.string().optional().nullable(),
+  vendor: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+  requester: z.string(),
+  status: z.string().default("pending"),
+  createdAt: z.string().datetime().optional(),
+  approvedAt: z.string().datetime().optional().nullable(),
+  approvedBy: z.string().optional().nullable(),
 });
 
-export const telegramChats = pgTable("telegram_chats", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  chatId: text("chat_id").notNull().unique(),
-  chatType: text("chat_type").notNull(),
-  role: text("role").notNull(),
-  isActive: boolean("is_active").notNull().default(true),
-  registeredAt: timestamp("registered_at").notNull().defaultNow(),
+export const telegramChatSchema = z.object({
+  id: z.string().uuid().optional(),
+  chatId: z.string(),
+  chatType: z.string(),
+  role: z.string(),
+  isActive: z.boolean().default(true),
+  registeredAt: z.string().datetime().optional(),
 });
 
-export const posterPosConfig = pgTable("poster_pos_config", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  apiEndpoint: text("api_endpoint").notNull(),
-  apiToken: text("api_token").notNull(),
-  lastSyncedAt: timestamp("last_synced_at"),
+// Shop Stock Sessions
+export const shopStockSessionSchema = z.object({
+  id: z.string().uuid().optional(),
+  sessionType: z.string(), // 'opening' or 'closing'
+  status: z.string().default("in_progress"), // 'in_progress', 'completed'
+  staffName: z.string(),
+  startedAt: z.string().datetime().optional(),
+  completedAt: z.string().datetime().optional().nullable(),
+  date: z.string().datetime().optional(),
+  totalItems: z.number().default(0),
+  countedItems: z.number().default(0),
 });
 
-// Shop Stock Sessions (Opening/Closing stock counts)
-export const shopStockSessions = pgTable("shop_stock_sessions", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  sessionType: text("session_type").notNull(), // 'opening' or 'closing'
-  status: text("status").notNull().default("in_progress"), // 'in_progress', 'completed'
-  staffName: text("staff_name").notNull(),
-  startedAt: timestamp("started_at").notNull().defaultNow(),
-  completedAt: timestamp("completed_at"),
-  date: timestamp("date").notNull().defaultNow(), // The business date for this session
-  totalItems: integer("total_items").default(0),
-  countedItems: integer("counted_items").default(0),
+export const shopStockEntrySchema = z.object({
+  id: z.string().uuid().optional(),
+  sessionId: z.string().uuid(),
+  inventoryItemId: z.string().uuid().optional().nullable(),
+  itemName: z.string(),
+  posterPosId: z.string().optional().nullable(),
+  quantity: z.string(),
+  unit: z.string().default("units"),
+  notes: z.string().optional().nullable(),
+  countedAt: z.string().datetime().optional(),
 });
 
-// Individual item counts within a stock session
-export const shopStockEntries = pgTable("shop_stock_entries", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  sessionId: varchar("session_id").references(() => shopStockSessions.id).notNull(),
-  inventoryItemId: varchar("inventory_item_id").references(() => inventoryItems.id),
-  itemName: text("item_name").notNull(),
-  posterPosId: varchar("poster_pos_id"),
-  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
-  unit: text("unit").notNull().default("units"),
-  notes: text("notes"),
-  countedAt: timestamp("counted_at").notNull().defaultNow(),
+// Goods Received
+export const goodsReceiptSchema = z.object({
+  id: z.string().uuid().optional(),
+  despatchLogId: z.string().uuid().optional().nullable(),
+  receivedBy: z.string(),
+  receivedAt: z.string().datetime().optional(),
+  status: z.string().default("pending"),
+  notes: z.string().optional().nullable(),
+  excelFilePath: z.string().optional().nullable(),
 });
 
-// Goods Received from Store
-export const goodsReceipts = pgTable("goods_receipts", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  despatchLogId: varchar("despatch_log_id").references(() => despatchLogs.id),
-  receivedBy: text("received_by").notNull(),
-  receivedAt: timestamp("received_at").notNull().defaultNow(),
-  status: text("status").notNull().default("pending"), // 'pending', 'received', 'partial'
-  notes: text("notes"),
-  excelFilePath: text("excel_file_path"),
+export const goodsReceiptItemSchema = z.object({
+  id: z.string().uuid().optional(),
+  receiptId: z.string().uuid(),
+  inventoryItemId: z.string().uuid().optional().nullable(),
+  itemName: z.string(),
+  posterPosId: z.string().optional().nullable(),
+  expectedQuantity: z.string(),
+  receivedQuantity: z.string().optional().nullable(),
+  unit: z.string().default("units"),
+  costPerUnit: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
 });
 
-// Individual items in a goods receipt
-export const goodsReceiptItems = pgTable("goods_receipt_items", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  receiptId: varchar("receipt_id").references(() => goodsReceipts.id).notNull(),
-  inventoryItemId: varchar("inventory_item_id").references(() => inventoryItems.id),
-  itemName: text("item_name").notNull(),
-  posterPosId: varchar("poster_pos_id"),
-  expectedQuantity: decimal("expected_quantity", { precision: 10, scale: 2 }).notNull(),
-  receivedQuantity: decimal("received_quantity", { precision: 10, scale: 2 }),
-  unit: text("unit").notNull().default("units"),
-  costPerUnit: decimal("cost_per_unit", { precision: 10, scale: 2 }),
-  notes: text("notes"),
+// Shop Expenses
+export const shopExpenseSchema = z.object({
+  id: z.string().uuid().optional(),
+  expenseType: z.string(), // 'supermarket' or 'petty_cash'
+  category: z.string().optional().nullable(),
+  description: z.string(),
+  amount: z.string(),
+  paidBy: z.string(),
+  paidTo: z.string().optional().nullable(),
+  receiptNumber: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+  createdAt: z.string().datetime().optional(),
 });
 
-// Shop Expenses (Supermarket purchases and Petty Cash)
-export const shopExpenses = pgTable("shop_expenses", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  expenseType: text("expense_type").notNull(), // 'supermarket' or 'petty_cash'
-  category: text("category"), // For petty cash: 'staff', 'transport', 'directors', 'mall_bills', 'other'
-  description: text("description").notNull(),
-  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
-  paidBy: text("paid_by").notNull(),
-  paidTo: text("paid_to"),
-  receiptNumber: text("receipt_number"),
-  notes: text("notes"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+export const expenseItemSchema = z.object({
+  id: z.string().uuid().optional(),
+  expenseId: z.string().uuid(),
+  inventoryItemId: z.string().uuid().optional().nullable(),
+  itemName: z.string(),
+  quantity: z.string(),
+  unit: z.string().default("units"),
+  costPerUnit: z.string().optional().nullable(),
 });
 
-// Items linked to expenses (for supermarket purchases)
-export const expenseItems = pgTable("expense_items", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  expenseId: varchar("expense_id").references(() => shopExpenses.id).notNull(),
-  inventoryItemId: varchar("inventory_item_id").references(() => inventoryItems.id),
-  itemName: text("item_name").notNull(),
-  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
-  unit: text("unit").notNull().default("units"),
-  costPerUnit: decimal("cost_per_unit", { precision: 10, scale: 2 }),
+// ============================================================================
+// MAIN STORE ADMIN TABLES
+// ============================================================================
+
+export const storeItemSchema = z.object({
+  id: z.string().uuid().optional(),
+  name: z.string(),
+  category: z.string().default("general"),
+  unit: z.string().default("pcs"),
+  minStock: z.string().default("0"),
+  currentStock: z.string().default("0"),
+  costPerUnit: z.string().optional().nullable(),
+  isActive: z.boolean().default(true),
 });
 
-// ============ MAIN STORE ADMIN TABLES ============
-
-// Store Items - Master list of items managed by the main store
-export const storeItems = pgTable("store_items", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: text("name").notNull(),
-  category: text("category").notNull().default("general"),
-  unit: text("unit").notNull().default("pcs"), // pcs, kg, g, ml, L
-  minStock: decimal("min_stock", { precision: 10, scale: 2 }).notNull().default("0"),
-  currentStock: decimal("current_stock", { precision: 10, scale: 2 }).notNull().default("0"),
-  costPerUnit: decimal("cost_per_unit", { precision: 10, scale: 2 }),
-  isActive: boolean("is_active").notNull().default(true),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+export const storePurchaseSchema = z.object({
+  id: z.string().uuid().optional(),
+  supplier: z.string().optional().nullable(),
+  invoiceNumber: z.string().optional().nullable(),
+  purchaseDate: z.string().datetime().optional(),
+  totalAmount: z.string().optional().nullable(),
+  status: z.string().default("received"),
+  notes: z.string().optional().nullable(),
+  createdBy: z.string(),
 });
 
-// Store Purchases - Items bought from suppliers
-export const storePurchases = pgTable("store_purchases", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  supplier: text("supplier"),
-  invoiceNumber: text("invoice_number"),
-  purchaseDate: timestamp("purchase_date").notNull().defaultNow(),
-  totalAmount: decimal("total_amount", { precision: 10, scale: 2 }),
-  status: text("status").notNull().default("received"), // received, partially_processed, fully_processed
-  notes: text("notes"),
-  createdBy: text("created_by").notNull(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+export const storePurchaseItemSchema = z.object({
+  id: z.string().uuid().optional(),
+  purchaseId: z.string().uuid(),
+  storeItemId: z.string().uuid().optional().nullable(),
+  itemName: z.string(),
+  quantity: z.string(),
+  unit: z.string().default("pcs"),
+  costPerUnit: z.string().optional().nullable(),
+  totalCost: z.string().optional().nullable(),
+  quantityProcessed: z.string().default("0"),
+  status: z.string().default("pending"),
 });
 
-// Store Purchase Items - Individual items in a purchase
-export const storePurchaseItems = pgTable("store_purchase_items", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  purchaseId: varchar("purchase_id").references(() => storePurchases.id).notNull(),
-  storeItemId: varchar("store_item_id").references(() => storeItems.id),
-  itemName: text("item_name").notNull(),
-  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
-  unit: text("unit").notNull().default("pcs"),
-  costPerUnit: decimal("cost_per_unit", { precision: 10, scale: 2 }),
-  totalCost: decimal("total_cost", { precision: 10, scale: 2 }),
-  quantityProcessed: decimal("quantity_processed", { precision: 10, scale: 2 }).notNull().default("0"),
-  status: text("status").notNull().default("pending"), // pending, partially_processed, fully_processed
+export const storeProcessedItemSchema = z.object({
+  id: z.string().uuid().optional(),
+  storeItemId: z.string().uuid().optional().nullable(),
+  purchaseItemId: z.string().uuid().optional().nullable(),
+  itemName: z.string(),
+  quantity: z.string(),
+  unit: z.string().default("pcs"),
+  batchNumber: z.string().optional().nullable(),
+  processedBy: z.string(),
+  processedAt: z.string().datetime().optional(),
+  status: z.string().default("ready"),
+  notes: z.string().optional().nullable(),
 });
 
-// Store Processed Items - Items packed and ready for dispatch
-export const storeProcessedItems = pgTable("store_processed_items", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  storeItemId: varchar("store_item_id").references(() => storeItems.id),
-  purchaseItemId: varchar("purchase_item_id").references(() => storePurchaseItems.id),
-  itemName: text("item_name").notNull(),
-  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
-  unit: text("unit").notNull().default("pcs"),
-  batchNumber: text("batch_number"),
-  processedBy: text("processed_by").notNull(),
-  processedAt: timestamp("processed_at").notNull().defaultNow(),
-  status: text("status").notNull().default("ready"), // ready, dispatched
-  notes: text("notes"),
+export const storeDespatchSchema = z.object({
+  id: z.string().uuid().optional(),
+  despatchDate: z.string().datetime().optional(),
+  destination: z.string().default("Shop"),
+  status: z.string().default("pending"),
+  totalItems: z.number().default(0),
+  sentBy: z.string(),
+  receivedBy: z.string().optional().nullable(),
+  receivedAt: z.string().datetime().optional().nullable(),
+  notes: z.string().optional().nullable(),
 });
 
-// Store Despatches - Shipments sent to the shop
-export const storeDespatches = pgTable("store_despatches", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  despatchDate: timestamp("despatch_date").notNull().defaultNow(),
-  destination: text("destination").notNull().default("Shop"),
-  status: text("status").notNull().default("pending"), // pending, in_transit, delivered, confirmed
-  totalItems: integer("total_items").notNull().default(0),
-  sentBy: text("sent_by").notNull(),
-  receivedBy: text("received_by"),
-  receivedAt: timestamp("received_at"),
-  notes: text("notes"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+export const storeDespatchItemSchema = z.object({
+  id: z.string().uuid().optional(),
+  despatchId: z.string().uuid(),
+  processedItemId: z.string().uuid().optional().nullable(),
+  storeItemId: z.string().uuid().optional().nullable(),
+  itemName: z.string(),
+  quantity: z.string(),
+  unit: z.string().default("pcs"),
+  receivedQuantity: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
 });
 
-// Store Despatch Items - Individual items in a despatch
-export const storeDespatchItems = pgTable("store_despatch_items", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  despatchId: varchar("despatch_id").references(() => storeDespatches.id).notNull(),
-  processedItemId: varchar("processed_item_id").references(() => storeProcessedItems.id),
-  storeItemId: varchar("store_item_id").references(() => storeItems.id),
-  itemName: text("item_name").notNull(),
-  quantity: decimal("quantity", { precision: 10, scale: 2 }).notNull(),
-  unit: text("unit").notNull().default("pcs"),
-  receivedQuantity: decimal("received_quantity", { precision: 10, scale: 2 }),
-  notes: text("notes"),
+export const storeReorderSchema = z.object({
+  id: z.string().uuid().optional(),
+  storeItemId: z.string().uuid().optional().nullable(),
+  itemName: z.string(),
+  currentStock: z.string(),
+  minStock: z.string(),
+  suggestedQuantity: z.string(),
+  unit: z.string().default("pcs"),
+  estimatedCost: z.string().optional().nullable(),
+  priority: z.string().default("normal"),
+  status: z.string().default("pending"),
+  orderedAt: z.string().datetime().optional().nullable(),
+  receivedAt: z.string().datetime().optional().nullable(),
+  createdBy: z.string(),
 });
 
-// Store Reorders - Items that need to be reordered from suppliers
-export const storeReorders = pgTable("store_reorders", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  storeItemId: varchar("store_item_id").references(() => storeItems.id),
-  itemName: text("item_name").notNull(),
-  currentStock: decimal("current_stock", { precision: 10, scale: 2 }).notNull(),
-  minStock: decimal("min_stock", { precision: 10, scale: 2 }).notNull(),
-  suggestedQuantity: decimal("suggested_quantity", { precision: 10, scale: 2 }).notNull(),
-  unit: text("unit").notNull().default("pcs"),
-  estimatedCost: decimal("estimated_cost", { precision: 10, scale: 2 }),
-  priority: text("priority").notNull().default("normal"), // low, normal, high, urgent
-  status: text("status").notNull().default("pending"), // pending, ordered, received, cancelled
-  orderedAt: timestamp("ordered_at"),
-  receivedAt: timestamp("received_at"),
-  createdBy: text("created_by").notNull(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+export const stockReconciliationSchema = z.object({
+  id: z.string().uuid().optional(),
+  date: z.string().datetime(),
+  openingSessionId: z.string().uuid().optional().nullable(),
+  closingSessionId: z.string().uuid().optional().nullable(),
+  status: z.string().default("pending"),
+  overItems: z.number().default(0),
+  underItems: z.number().default(0),
+  matchedItems: z.number().default(0),
+  sentToOwnerAt: z.string().datetime().optional().nullable(),
 });
 
-// Stock Reconciliation Reports
-export const stockReconciliations = pgTable("stock_reconciliations", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  date: timestamp("date").notNull(),
-  openingSessionId: varchar("opening_session_id").references(() => shopStockSessions.id),
-  closingSessionId: varchar("closing_session_id").references(() => shopStockSessions.id),
-  status: text("status").notNull().default("pending"), // 'pending', 'completed', 'sent'
-  overItems: integer("over_items").default(0),
-  underItems: integer("under_items").default(0),
-  matchedItems: integer("matched_items").default(0),
-  sentToOwnerAt: timestamp("sent_to_owner_at"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+// ============================================================================
+// INSERT SCHEMAS (Legacy/Reference)
+// ============================================================================
 
-// Insert Schemas
-export const insertUserSchema = createInsertSchema(users).omit({ id: true });
-export const insertInventoryItemSchema = createInsertSchema(inventoryItems).omit({ id: true });
-export const insertSalesRecordSchema = createInsertSchema(salesRecords).omit({ id: true });
-export const insertDespatchLogSchema = createInsertSchema(despatchLogs).omit({ id: true });
-export const insertReorderRequestSchema = createInsertSchema(reorderRequests).omit({ id: true });
-export const insertTelegramChatSchema = createInsertSchema(telegramChats).omit({ id: true });
-export const insertPosterPosConfigSchema = createInsertSchema(posterPosConfig).omit({ id: true });
-export const insertShopStockSessionSchema = createInsertSchema(shopStockSessions).omit({ id: true });
-export const insertShopStockEntrySchema = createInsertSchema(shopStockEntries).omit({ id: true });
-export const insertGoodsReceiptSchema = createInsertSchema(goodsReceipts).omit({ id: true });
-export const insertGoodsReceiptItemSchema = createInsertSchema(goodsReceiptItems).omit({ id: true });
-export const insertShopExpenseSchema = createInsertSchema(shopExpenses).omit({ id: true });
-export const insertExpenseItemSchema = createInsertSchema(expenseItems).omit({ id: true });
-export const insertStockReconciliationSchema = createInsertSchema(stockReconciliations).omit({ id: true });
+export const insertUserSchema = userSchema;
+export const insertInventoryItemSchema = inventoryItemSchema;
+export const insertSalesRecordSchema = salesRecordSchema;
+export const insertDespatchLogSchema = despatchLogSchema;
+export const insertReorderRequestSchema = reorderRequestSchema;
+export const insertTelegramChatSchema = telegramChatSchema;
+export const insertShopStockSessionSchema = shopStockSessionSchema;
+export const insertShopStockEntrySchema = shopStockEntrySchema;
+export const insertGoodsReceiptSchema = goodsReceiptSchema;
+export const insertGoodsReceiptItemSchema = goodsReceiptItemSchema;
+export const insertShopExpenseSchema = shopExpenseSchema;
+export const insertExpenseItemSchema = expenseItemSchema;
+export const insertStockReconciliationSchema = stockReconciliationSchema;
+export const insertStoreItemSchema = storeItemSchema;
+export const insertStorePurchaseSchema = storePurchaseSchema;
+export const insertStorePurchaseItemSchema = storePurchaseItemSchema;
+export const insertStoreProcessedItemSchema = storeProcessedItemSchema;
+export const insertStoreDespatchSchema = storeDespatchSchema;
+export const insertStoreDespatchItemSchema = storeDespatchItemSchema;
+export const insertStoreReorderSchema = storeReorderSchema;
 
-// Main Store Admin Insert Schemas
-export const insertStoreItemSchema = createInsertSchema(storeItems).omit({ id: true, createdAt: true, updatedAt: true });
-export const insertStorePurchaseSchema = createInsertSchema(storePurchases).omit({ id: true, createdAt: true });
-export const insertStorePurchaseItemSchema = createInsertSchema(storePurchaseItems).omit({ id: true });
-export const insertStoreProcessedItemSchema = createInsertSchema(storeProcessedItems).omit({ id: true });
-export const insertStoreDespatchSchema = createInsertSchema(storeDespatches).omit({ id: true, createdAt: true });
-export const insertStoreDespatchItemSchema = createInsertSchema(storeDespatchItems).omit({ id: true });
-export const insertStoreReorderSchema = createInsertSchema(storeReorders).omit({ id: true, createdAt: true });
+// ============================================================================
+// TYPES
+// ============================================================================
 
-// Types
-export type InsertUser = z.infer<typeof insertUserSchema>;
-export type User = typeof users.$inferSelect;
-export type InsertInventoryItem = z.infer<typeof insertInventoryItemSchema>;
-export type InventoryItem = typeof inventoryItems.$inferSelect;
-export type InsertSalesRecord = z.infer<typeof insertSalesRecordSchema>;
-export type SalesRecord = typeof salesRecords.$inferSelect;
-export type InsertDespatchLog = z.infer<typeof insertDespatchLogSchema>;
-export type DespatchLog = typeof despatchLogs.$inferSelect;
-export type InsertReorderRequest = z.infer<typeof insertReorderRequestSchema>;
-export type ReorderRequest = typeof reorderRequests.$inferSelect;
-export type InsertTelegramChat = z.infer<typeof insertTelegramChatSchema>;
-export type TelegramChat = typeof telegramChats.$inferSelect;
-export type InsertPosterPosConfig = z.infer<typeof insertPosterPosConfigSchema>;
-export type PosterPosConfig = typeof posterPosConfig.$inferSelect;
-export type InsertShopStockSession = z.infer<typeof insertShopStockSessionSchema>;
-export type ShopStockSession = typeof shopStockSessions.$inferSelect;
-export type InsertShopStockEntry = z.infer<typeof insertShopStockEntrySchema>;
-export type ShopStockEntry = typeof shopStockEntries.$inferSelect;
-export type InsertGoodsReceipt = z.infer<typeof insertGoodsReceiptSchema>;
-export type GoodsReceipt = typeof goodsReceipts.$inferSelect;
-export type InsertGoodsReceiptItem = z.infer<typeof insertGoodsReceiptItemSchema>;
-export type GoodsReceiptItem = typeof goodsReceiptItems.$inferSelect;
-export type InsertShopExpense = z.infer<typeof insertShopExpenseSchema>;
-export type ShopExpense = typeof shopExpenses.$inferSelect;
-export type InsertExpenseItem = z.infer<typeof insertExpenseItemSchema>;
-export type ExpenseItem = typeof expenseItems.$inferSelect;
-export type InsertStockReconciliation = z.infer<typeof insertStockReconciliationSchema>;
-export type StockReconciliation = typeof stockReconciliations.$inferSelect;
+export type User = z.infer<typeof userSchema>;
+export type InventoryItem = z.infer<typeof inventoryItemSchema>;
+export type SalesRecord = z.infer<typeof salesRecordSchema>;
+export type DespatchLog = z.infer<typeof despatchLogSchema>;
+export type ReorderRequest = z.infer<typeof reorderRequestSchema>;
+export type TelegramChat = z.infer<typeof telegramChatSchema>;
+export type ShopStockSession = z.infer<typeof shopStockSessionSchema>;
+export type ShopStockEntry = z.infer<typeof shopStockEntrySchema>;
+export type GoodsReceipt = z.infer<typeof goodsReceiptSchema>;
+export type GoodsReceiptItem = z.infer<typeof goodsReceiptItemSchema>;
+export type ShopExpense = z.infer<typeof shopExpenseSchema>;
+export type ExpenseItem = z.infer<typeof expenseItemSchema>;
+export type StockReconciliation = z.infer<typeof stockReconciliationSchema>;
+export type StoreItem = z.infer<typeof storeItemSchema>;
+export type StorePurchase = z.infer<typeof storePurchaseSchema>;
+export type StorePurchaseItem = z.infer<typeof storePurchaseItemSchema>;
+export type StoreProcessedItem = z.infer<typeof storeProcessedItemSchema>;
+export type StoreDespatch = z.infer<typeof storeDespatchSchema>;
+export type StoreDespatchItem = z.infer<typeof storeDespatchItemSchema>;
+export type StoreReorder = z.infer<typeof storeReorderSchema>;
 
-// Main Store Admin Types
-export type InsertStoreItem = z.infer<typeof insertStoreItemSchema>;
-export type StoreItem = typeof storeItems.$inferSelect;
-export type InsertStorePurchase = z.infer<typeof insertStorePurchaseSchema>;
-export type StorePurchase = typeof storePurchases.$inferSelect;
-export type InsertStorePurchaseItem = z.infer<typeof insertStorePurchaseItemSchema>;
-export type StorePurchaseItem = typeof storePurchaseItems.$inferSelect;
-export type InsertStoreProcessedItem = z.infer<typeof insertStoreProcessedItemSchema>;
-export type StoreProcessedItem = typeof storeProcessedItems.$inferSelect;
-export type InsertStoreDespatch = z.infer<typeof insertStoreDespatchSchema>;
-export type StoreDespatch = typeof storeDespatches.$inferSelect;
-export type InsertStoreDespatchItem = z.infer<typeof insertStoreDespatchItemSchema>;
-export type StoreDespatchItem = typeof storeDespatchItems.$inferSelect;
-export type InsertStoreReorder = z.infer<typeof insertStoreReorderSchema>;
-export type StoreReorder = typeof storeReorders.$inferSelect;
+// Legacy Drizzle Object exports (stubs to prevent immediate breakage)
+// These should be removed eventually
+

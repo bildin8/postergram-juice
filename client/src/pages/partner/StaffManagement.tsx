@@ -367,11 +367,20 @@ export default function StaffManagement() {
                                                         variant="ghost"
                                                         size="icon"
                                                         className="h-9 w-9 text-red-400/70 hover:text-red-400 hover:bg-red-400/10"
-                                                        onClick={() => {
+                                                        onClick={async () => {
                                                             if (confirm(`Revoke access for ${s.name}?`)) {
-                                                                // Note: We don't have a specific DELETE endpoint in opRoutes yet
-                                                                // but we can de-activate or use existing partner portal delete if shared
-                                                                toast({ title: "Note", description: "Use Edit to deactivate staff." });
+                                                                try {
+                                                                    const res = await fetch(`/api/op/staff/${s.id}`, { method: 'DELETE' });
+                                                                    if (res.ok) {
+                                                                        toast({ title: "Access Revoked", description: `${s.name} has been deactivated.` });
+                                                                        queryClient.invalidateQueries({ queryKey: ["/api/op/staff"] });
+                                                                    } else {
+                                                                        const err = await res.json();
+                                                                        toast({ title: "Error", description: err.error || "Failed to revoke access", variant: "destructive" });
+                                                                    }
+                                                                } catch (error: any) {
+                                                                    toast({ title: "Error", description: error.message, variant: "destructive" });
+                                                                }
                                                             }
                                                         }}
                                                     >

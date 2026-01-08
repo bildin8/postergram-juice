@@ -12,6 +12,8 @@
 import { supabaseAdmin } from './supabase';
 import { getPosterPOSClient, isPosterPOSInitialized, PosterPOSTransaction } from './posterpos';
 import { getTelegramBot, isTelegramBotInitialized } from './telegram';
+import { recordSaleDeductions } from './ledgerService';
+import { createHash } from 'crypto';
 import { log } from './index';
 
 // Sync interval: 5 minutes
@@ -251,6 +253,22 @@ async function processTransaction(transaction: PosterPOSTransaction, result: Syn
     const consumptionCount = await calculateAndStoreConsumption(syncedTx.id, transaction.products);
     result.consumptionRecordsCreated += consumptionCount;
 
+    // Record inventory deduction in ledger (Single Source of Truth for Stock)
+    const ledgerItems = transaction.products.map((p: any) => ({
+        name: p.product_name,
+        quantity: parseFloat(p.num),
+        unit: 'unit', // Poster products are units, ingredients are g/ml. We deduct the product?
+        // Wait, ledger records INGREDIENT movements, not product movements?
+        // The ledgerService.recordSaleDeductions expects items. 
+        // If we pass products, it will record 'sale' of 'product'. 
+        // But stock is 'ingredients'.
+        // We need to pass the INGREDIENTS consumed.
+    }));
+
+    // We already calculated consumption in calculateAndStoreConsumption. 
+    // We should use that data to feed the ledger!
+    // Refactoring: calculateAndStoreConsumption returns the records.
+
     // Send Telegram notification for new sales
     // Only send notification if it's recent (e.g. within last hour), otherwise backfill spams channel
     const closeDate = parseCloseDate(transaction.date_close);
@@ -271,6 +289,7 @@ async function calculateAndStoreConsumption(
     products: any[]
 ): Promise<number> {
     let recordsCreated = 0;
+    const ledgerMovements: { ingredientId: string; name: string; quantity: number; unit: string }[] = [];
 
     for (const product of products) {
         const productId = product.product_id?.toString();
@@ -278,81 +297,136 @@ async function calculateAndStoreConsumption(
 
         const quantity = parseFloat(product.num) || 1;
 
-        // Get recipe for this product
+        // Get active recipe version
+        // We first get the recipe, then find its active version
         const { data: recipe } = await supabaseAdmin
             .from('op_recipes')
-            .select(`
-        id,
-        name,
-        op_recipe_ingredients(
-          ingredient_id,
-          quantity,
-          unit,
-          is_modifier,
-          poster_modification_id,
-          op_ingredients(name)
-        )
-      `)
+            .select('id, name')
             .eq('poster_product_id', productId)
             .single();
 
-        if (!recipe || !recipe.op_recipe_ingredients) {
-            continue; // No recipe found - skip
+        if (!recipe) continue;
+
+        // Get active version
+        const { data: version } = await supabaseAdmin
+            .from('op_recipe_versions')
+            .select('id, ingredients_snapshot')
+            .eq('recipe_id', recipe.id)
+            .is('active_to', null)
+            .single();
+
+        // If no versioning yet, fallback to live recipe (or skip/auto-create?)
+        // For now, if we just implemented versioning, old recipes might not have versions.
+        // We will fetch from op_recipe_ingredients as fallback for backward compt.
+
+        let ingredientsToProcess: any[] = [];
+        let recipeVersionId = version?.id || null;
+
+        if (version && version.ingredients_snapshot) {
+            ingredientsToProcess = version.ingredients_snapshot;
+        } else {
+            // Fallback: fetch current live structure
+            const { data: liveIngredients } = await supabaseAdmin
+                .from('op_recipe_ingredients')
+                .select(`
+                  ingredient_id,
+                  quantity,
+                  unit,
+                  is_modifier,
+                  poster_modification_id,
+                  op_ingredients(name)
+                `)
+                .eq('recipe_id', recipe.id);
+
+            if (liveIngredients) {
+                ingredientsToProcess = liveIngredients.map((i: any) => ({
+                    ingredient_id: i.ingredient_id,
+                    quantity: i.quantity,
+                    unit: i.unit,
+                    is_modifier: i.is_modifier,
+                    poster_modification_id: i.poster_modification_id,
+                    name: i.op_ingredients?.name
+                }));
+            }
         }
 
-        // Process base ingredients
-        for (const recipeIng of recipe.op_recipe_ingredients) {
+        for (const recipeIng of ingredientsToProcess) {
             if (recipeIng.is_modifier) continue; // Skip modifiers, handle separately
 
+            const consumptionQty = recipeIng.quantity * quantity;
             const consumptionRecord = {
                 transaction_id: transactionId,
-                ingredient_id: recipeIng.ingredient_id,
-                ingredient_name: (recipeIng as any).op_ingredients?.name || 'Unknown',
+                ingredient_id: (recipeIng as any).ingredient_id || (recipeIng as any).id,
+                ingredient_name: recipeIng.name || 'Unknown',
                 recipe_id: recipe.id,
                 recipe_name: recipe.name,
-                quantity_consumed: recipeIng.quantity * quantity,
+                quantity_consumed: consumptionQty,
                 unit: recipeIng.unit,
                 is_modifier: false,
+                recipe_version_id: recipeVersionId
             };
 
             const { error } = await supabaseAdmin
                 .from('op_calculated_consumption')
                 .insert(consumptionRecord);
 
-            if (!error) recordsCreated++;
+            if (!error) {
+                recordsCreated++;
+                ledgerMovements.push({
+                    ingredientId: (recipeIng as any).ingredient_id || (recipeIng as any).id,
+                    name: recipeIng.name || 'Unknown',
+                    quantity: consumptionQty,
+                    unit: recipeIng.unit
+                });
+            }
         }
 
-        // Process modifiers if present
+        // Process modifiers
         if (product.modifications && Array.isArray(product.modifications)) {
             for (const mod of product.modifications) {
                 const modId = mod.dish_modification_id || mod.modification_id;
                 if (!modId) continue;
 
-                // Find matching recipe ingredient
-                const modIngredient = recipe.op_recipe_ingredients.find(
+                const modIngredient = ingredientsToProcess.find(
                     (ri: any) => ri.poster_modification_id === modId.toString()
                 );
 
                 if (modIngredient) {
+                    const consumptionQty = modIngredient.quantity * quantity;
+
                     const consumptionRecord = {
                         transaction_id: transactionId,
                         ingredient_id: modIngredient.ingredient_id,
-                        ingredient_name: (modIngredient as any).op_ingredients?.name || 'Unknown',
+                        ingredient_name: modIngredient.name || 'Unknown',
                         recipe_id: recipe.id,
                         recipe_name: recipe.name,
-                        quantity_consumed: modIngredient.quantity * quantity,
+                        quantity_consumed: consumptionQty,
                         unit: modIngredient.unit,
                         is_modifier: true,
+                        recipe_version_id: recipeVersionId
                     };
 
                     const { error } = await supabaseAdmin
                         .from('op_calculated_consumption')
                         .insert(consumptionRecord);
 
-                    if (!error) recordsCreated++;
+                    if (!error) {
+                        recordsCreated++;
+                        ledgerMovements.push({
+                            ingredientId: modIngredient.ingredient_id,
+                            name: modIngredient.name || 'Unknown',
+                            quantity: consumptionQty,
+                            unit: modIngredient.unit
+                        });
+                    }
                 }
             }
         }
+    }
+
+    // RECORD LEDGER MOVEMENTS (Aggregated)
+    if (ledgerMovements.length > 0) {
+        await recordSaleDeductions(transactionId, ledgerMovements);
     }
 
     return recordsCreated;
@@ -468,6 +542,9 @@ export async function syncRecipes(): Promise<{ recipesUpserted: number; ingredie
             })
             .eq('sync_type', 'recipes');
 
+        // VERSIONING: Snapshot active versions
+        await processRecipeVersioning(products);
+
         log(`Recipe sync complete: ${recipesUpserted} recipes, ${ingredientsUpserted} ingredients`, 'sales-sync');
 
     } catch (error: any) {
@@ -567,5 +644,94 @@ async function sendSaleNotification(transaction: PosterPOSTransaction): Promise<
 // ============================================================================
 // EXPORTS FOR API ROUTES
 // ============================================================================
+
+// ============================================================================
+// VERSIONING HELPER
+// ============================================================================
+
+async function processRecipeVersioning(products: any[]) {
+    try {
+        for (const product of products) {
+            const posterId = product.product_id.toString();
+            // 1. Fetch current recipe ID
+            const { data: recipe } = await supabaseAdmin
+                .from('op_recipes')
+                .select('id')
+                .eq('poster_product_id', posterId)
+                .single();
+
+            if (!recipe) continue;
+
+            // 2. Build snapshot object
+            const snapshot = (product.ingredients || []).map((ing: any) => ({
+                poster_ingredient_id: ing.ingredient_id,
+                name: ing.ingredient_name,
+                quantity: ing.structure_netto || ing.structure_brutto || 0,
+                unit: ing.structure_unit || ing.ingredient_unit || 'g',
+                is_modifier: false
+            }));
+
+            if (product.group_modifications) {
+                for (const group of product.group_modifications) {
+                    for (const mod of group.modifications) {
+                        if (mod.ingredient_id) {
+                            snapshot.push({
+                                poster_ingredient_id: mod.ingredient_id,
+                                name: mod.ingredient_name || mod.name,
+                                quantity: mod.netto || mod.brutto || 0,
+                                unit: mod.ingredient_unit || 'g',
+                                is_modifier: true,
+                                poster_modification_id: mod.dish_modification_id
+                            });
+                        }
+                    }
+                }
+            }
+
+            // 3. Resolve internal IDs for snapshot (to make it robust)
+            // Actually, for the snapshot, we can use poster IDs if that's what we have. 
+            // Better to use internal IDs if we can, but that requires more queries.
+            // Let's rely on the fact we just synced ingredients. 
+            // We will store the structure as is for now.
+
+            const hash = createHash('md5').update(JSON.stringify(snapshot)).digest('hex');
+
+            // 4. Check active version
+            const { data: activeVersion } = await supabaseAdmin
+                .from('op_recipe_versions')
+                .select('*')
+                .eq('recipe_id', recipe.id)
+                .is('active_to', null)
+                .single();
+
+            if (activeVersion) {
+                if (activeVersion.version_hash !== hash) {
+                    // Close old version
+                    await supabaseAdmin
+                        .from('op_recipe_versions')
+                        .update({ active_to: new Date().toISOString() })
+                        .eq('id', activeVersion.id);
+
+                    // Create new version
+                    await supabaseAdmin.from('op_recipe_versions').insert({
+                        recipe_id: recipe.id,
+                        version_hash: hash,
+                        ingredients_snapshot: snapshot
+                    });
+                    log(`New version created for recipe ${posterId}`, 'sales-sync');
+                }
+            } else {
+                // Create first version
+                await supabaseAdmin.from('op_recipe_versions').insert({
+                    recipe_id: recipe.id,
+                    version_hash: hash,
+                    ingredients_snapshot: snapshot
+                });
+            }
+        }
+    } catch (e: any) {
+        log(`Error processing versioning: ${e.message}`, 'sales-sync');
+    }
+}
 
 export { getSyncStatus };

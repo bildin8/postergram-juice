@@ -12,15 +12,15 @@ export default defineConfig({
     tailwindcss(),
     metaImagesPlugin(),
     ...(process.env.NODE_ENV !== "production" &&
-    process.env.REPL_ID !== undefined
+      process.env.REPL_ID !== undefined
       ? [
-          await import("@replit/vite-plugin-cartographer").then((m) =>
-            m.cartographer(),
-          ),
-          await import("@replit/vite-plugin-dev-banner").then((m) =>
-            m.devBanner(),
-          ),
-        ]
+        await import("@replit/vite-plugin-cartographer").then((m) =>
+          m.cartographer(),
+        ),
+        await import("@replit/vite-plugin-dev-banner").then((m) =>
+          m.devBanner(),
+        ),
+      ]
       : []),
   ],
   resolve: {
@@ -39,6 +39,55 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom", "wouter"],
+          ui: [
+            "@radix-ui/react-accordion",
+            "@radix-ui/react-alert-dialog",
+            "@radix-ui/react-aspect-ratio",
+            "@radix-ui/react-avatar",
+            "@radix-ui/react-checkbox",
+            "@radix-ui/react-collapsible",
+            "@radix-ui/react-context-menu",
+            "@radix-ui/react-dialog",
+            "@radix-ui/react-dropdown-menu",
+            "@radix-ui/react-hover-card",
+            "@radix-ui/react-label",
+            "@radix-ui/react-menubar",
+            "@radix-ui/react-navigation-menu",
+            "@radix-ui/react-popover",
+            "@radix-ui/react-progress",
+            "@radix-ui/react-radio-group",
+            "@radix-ui/react-scroll-area",
+            "@radix-ui/react-select",
+            "@radix-ui/react-separator",
+            "@radix-ui/react-slider",
+            "@radix-ui/react-slot",
+            "@radix-ui/react-switch",
+            "@radix-ui/react-tabs",
+            "@radix-ui/react-toast",
+            "@radix-ui/react-toggle",
+            "@radix-ui/react-toggle-group",
+            "@radix-ui/react-tooltip",
+            "class-variance-authority",
+            "clsx",
+            "cmdk",
+            "date-fns",
+            "lucide-react",
+            "tailwind-merge",
+            "tailwindcss-animate",
+            "vaul",
+            "sonner",
+            "input-otp",
+          ],
+          charts: ["recharts"],
+          forms: ["react-hook-form", "@hookform/resolvers", "zod"],
+          motion: ["framer-motion"],
+        },
+      },
+    },
   },
   server: {
     host: "0.0.0.0",

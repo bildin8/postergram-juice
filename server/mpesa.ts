@@ -1,4 +1,5 @@
 import { log } from "./index";
+import { supabaseAdmin } from "./supabase";
 
 // M-Pesa Daraja API Client
 // Supports both sandbox and production environments
@@ -305,6 +306,28 @@ export class MpesaClient {
                 createdAt: transactionStore.get(checkoutRequestId)?.createdAt || new Date(),
                 updatedAt: new Date(),
             });
+
+            // Persist to DB
+            (async () => {
+                try {
+                    await supabaseAdmin
+                        .from('mpesa_transactions')
+                        .upsert({
+                            checkout_request_id: checkoutRequestId,
+                            merchant_request_id: callback.MerchantRequestID,
+                            result_code: resultCode.toString(),
+                            result_desc: resultDesc,
+                            mpesa_receipt_number: metadata.MpesaReceiptNumber,
+                            amount: metadata.Amount ? parseFloat(metadata.Amount) : undefined,
+                            phone_number: metadata.PhoneNumber?.toString(),
+                            transaction_date: metadata.TransactionDate?.toString(),
+                            status: resultCode === 0 ? 'completed' : (resultCode === 1032 ? 'cancelled' : 'failed'),
+                            updated_at: new Date().toISOString()
+                        }, { onConflict: 'checkout_request_id' });
+                } catch (dbError: any) {
+                    log(`M-Pesa DB Persist Error: ${dbError.message}`);
+                }
+            })();
 
             log(`M-Pesa Callback: Transaction ${checkoutRequestId} updated to ${resultCode === 0 ? 'success' : 'failed'}`);
         } catch (error: any) {

@@ -1,5 +1,6 @@
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { secureFetch } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +8,7 @@ import {
     ShoppingCart,
     Package,
     ArrowRightLeft,
+    ArrowLeft,
     Factory,
     Truck,
     AlertTriangle,
@@ -28,17 +30,18 @@ export default function StoreHome() {
         queryKey: ["/api/store/queue-counts"],
         queryFn: async () => {
             // Aggregate counts from multiple endpoints
-            const [buyRes, dispatchRes, productionRes, exceptionsRes] = await Promise.all([
-                fetch("/api/store/queue/to-buy").then(r => r.json()),
-                fetch("/api/store/queue/to-dispatch").then(r => r.json()),
-                fetch("/api/store/queue/production").then(r => r.json()),
-                fetch("/api/store/exceptions").then(r => r.json()),
+            const [buyRes, dispatchRes, productionRes, exceptionsRes, crossdockRes] = await Promise.all([
+                secureFetch("/api/store/queue/to-buy").then(r => r.json()),
+                secureFetch("/api/store/queue/to-dispatch").then(r => r.json()),
+                secureFetch("/api/store/queue/production").then(r => r.json()),
+                secureFetch("/api/store/exceptions").then(r => r.json()),
+                secureFetch("/api/store/queue/crossdock").then(r => r.json()),
             ]);
 
             return {
                 toBuy: buyRes?.length || 0,
-                toReceive: 0, // TODO: pending purchases to receive
-                crossDock: 0, // TODO: trade goods pending
+                toReceive: 0, // Tracked via completed purchase status workflow
+                crossDock: crossdockRes?.length || 0,
                 production: productionRes?.length || 0,
                 toDispatch: dispatchRes?.length || 0,
                 exceptions: exceptionsRes?.length || 0,
@@ -50,7 +53,7 @@ export default function StoreHome() {
     const tiles = [
         {
             title: "To Buy",
-            description: "Approved purchase requests to execute",
+            description: "Execute approved Partner requests",
             icon: ShoppingCart,
             count: counts?.toBuy || 0,
             href: "/store/to-buy",
@@ -82,7 +85,7 @@ export default function StoreHome() {
         },
         {
             title: "To Dispatch",
-            description: "Approved items to send to shop",
+            description: "Send approved stock to Shop",
             icon: Truck,
             count: counts?.toDispatch || 0,
             href: "/store/despatch",
@@ -111,13 +114,13 @@ export default function StoreHome() {
             <div className="max-w-6xl mx-auto">
                 {/* Header */}
                 <div className="mb-8">
-                    <Link href="/partner">
+                    <Link href="/">
                         <Button variant="ghost" className="text-slate-400 hover:text-white mb-4">
                             <ArrowRightLeft className="h-4 w-4 mr-2" />
-                            Back to Partner
+                            Back to Home
                         </Button>
                     </Link>
-                    <h1 className="text-3xl font-bold text-white mb-2">Supply Chain Operations</h1>
+                    <h1 className="text-3xl font-bold text-white mb-2">Store Portal</h1>
                     <p className="text-slate-400">Execution dashboard for store operations</p>
                 </div>
 

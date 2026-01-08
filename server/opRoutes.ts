@@ -1132,6 +1132,30 @@ router.put('/staff/:id', async (req: Request, res: Response) => {
     }
 });
 
+/**
+ * DELETE /api/op/staff/:id
+ * Deactivate staff member (soft delete - preserves audit trail)
+ */
+router.delete('/staff/:id', async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+
+        const { data, error } = await supabaseAdmin
+            .from('op_staff')
+            .update({ is_active: false })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        log(`Staff ${data.name} deactivated`, 'staff');
+        res.json({ success: true, message: 'Staff deactivated successfully' });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // ============================================================================
 // ALERTS ENDPOINTS
 // ============================================================================

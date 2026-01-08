@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
+import { secureFetch } from "@/lib/api";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,21 +27,25 @@ export default function CashHandover() {
     // Mutation to save handover
     const handoverMutation = useMutation({
         mutationFn: async (data: any) => {
-            // Post to /api/shop/handover (need to create or mock)
-            // For now, assume it works if PIN is valid
-            if (method === "physical" && data.pin !== "1234") { // Mock PIN check
-                throw new Error("Invalid Partner PIN");
+            const res = await secureFetch("/api/shop/shifts/handover", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(data),
+            });
+
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.message || "Failed to record handover");
             }
 
-            // In real impl, we would hit an endpoint
-            return { success: true };
+            return res.json();
         },
         onSuccess: () => {
             toast({ title: "Handover Complete", description: "Shift can now be closed." });
-            // Redirect to Shift Close or Home
+            queryClient.invalidateQueries({ queryKey: ["/api/shop/shifts/current"] });
             setLocation("/shop");
         },
-        onError: (err) => {
+        onError: (err: Error) => {
             toast({ title: "Handover Failed", description: err.message, variant: "destructive" });
         }
     });
@@ -62,7 +67,7 @@ export default function CashHandover() {
     };
 
     return (
-        <div className="min-h-screen bg-slate-950 p-6 flex flex-col items-center justify-center">
+        <div className="min-h-screen bg-gradient-to-br from-emerald-900 via-slate-900 to-slate-900 p-6 flex flex-col items-center justify-center">
             <Card className="w-full max-w-md bg-slate-900 border-slate-800 shadow-2xl">
                 <CardHeader>
                     <div className="flex items-center justify-between mb-2">
