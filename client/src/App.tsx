@@ -24,6 +24,7 @@ import PowerDashboard from "@/pages/partner/PowerDashboard";
 import PartnerSettings from "@/pages/partner/PartnerSettings";
 import PurchaseRequests from "@/pages/partner/PurchaseRequests";
 import DispatchOrders from "@/pages/partner/DispatchOrders";
+import CustomReports from "@/pages/partner/CustomReports";
 
 // Store Portal
 import StoreHome from "@/pages/store/StoreHome";
@@ -100,6 +101,7 @@ function Router() {
       <Route path="/partner/settings" component={PartnerSettings} />
       <Route path="/partner/purchases" component={PurchaseRequests} />
       <Route path="/partner/dispatches" component={DispatchOrders} />
+      <Route path="/partner/reports" component={CustomReports} />
 
       {/* ================================================================ */}
       {/* LEGACY OWNER ROUTES - Redirect to Partner Portal                */}

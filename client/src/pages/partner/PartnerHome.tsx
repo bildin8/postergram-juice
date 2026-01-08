@@ -107,6 +107,13 @@ export default function PartnerHome() {
             featured: true,
         },
         {
+            title: "Analytics & Reports",
+            description: "Custom insights & performance metrics",
+            icon: PieChart,
+            href: "/partner/reports",
+            color: "bg-purple-600",
+        },
+        {
             title: "Partner Settings",
             description: "Configure controls & preferences",
             icon: Settings,

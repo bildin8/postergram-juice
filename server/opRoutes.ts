@@ -1418,6 +1418,171 @@ router.get('/reports/top-sellers', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/op/reports/builder
+ * Flexible report builder for custom analytics
+ */
+router.get('/reports/builder', async (req: Request, res: Response) => {
+    try {
+        const { type, from, to, groupBy } = req.query; // type: 'sales_analysis' | 'ingredient_usage' | 'product_margins'
+
+        const fromDate = from ? new Date(from as string) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+        const toDate = to ? new Date(to as string) : new Date();
+        // Ensure toDate includes the full day
+        if (to) toDate.setHours(23, 59, 59, 999);
+
+        if (type === 'sales_analysis') {
+            const { data: transactions, error } = await supabaseAdmin
+                .from('op_synced_transactions')
+                .select('transaction_date, total_amount, products')
+                .gte('transaction_date', fromDate.toISOString())
+                .lte('transaction_date', toDate.toISOString());
+
+            if (error) throw error;
+
+            // Resolving names
+            const productNames = new Set<string>();
+            const salesByProduct: Record<string, any> = {};
+            const salesoverTime: Record<string, number> = {};
+
+            transactions?.forEach(tx => {
+                const day = tx.transaction_date.split('T')[0];
+                salesoverTime[day] = (salesoverTime[day] || 0) + (tx.total_amount || 0);
+
+                tx.products?.forEach((p: any) => {
+                    const id = (p.product_id || '').toString();
+                    if (id) productNames.add(id);
+                    const name = p.product_name || p.name || id;
+
+                    if (!salesByProduct[id]) {
+                        salesByProduct[id] = { id, name, quantity: 0, revenue: 0 };
+                    }
+                    if (salesByProduct[id].name === id && (p.product_name || p.name)) {
+                        salesByProduct[id].name = p.product_name || p.name;
+                    }
+
+                    salesByProduct[id].quantity += (parseFloat(p.count || p.num || '1'));
+                    salesByProduct[id].revenue += (parseFloat(p.price || '0') * parseFloat(p.count || p.num || '1'));
+                });
+            });
+
+            // Name enrichment
+            const nameMap = await getProductNames(Array.from(productNames));
+            Object.values(salesByProduct).forEach((p: any) => {
+                if (nameMap[p.id]) p.name = nameMap[p.id];
+                if (!p.name || p.name === p.id) p.name = 'Unknown Item (' + p.id + ')';
+            });
+
+            res.json({
+                summary: Object.values(salesByProduct).sort((a: any, b: any) => b.revenue - a.revenue),
+                trend: Object.entries(salesoverTime).map(([date, revenue]) => ({ date, revenue })).sort((a, b) => a.date.localeCompare(b.date))
+            });
+
+        } else if (type === 'ingredient_usage') {
+            const { data: consumption, error } = await supabaseAdmin
+                .from('v_op_daily_consumption') // leverages existing view for efficiency
+                .select('*')
+                .gte('sale_date', fromDate.toISOString().split('T')[0])
+                .lte('sale_date', toDate.toISOString().split('T')[0]);
+
+            if (error) throw error;
+
+            res.json(consumption || []);
+
+        } else if (type === 'product_margins') {
+            // 1. Get Transactions
+            const { data: transactions, error: txError } = await supabaseAdmin
+                .from('op_synced_transactions')
+                .select('id, transaction_date, products')
+                .gte('transaction_date', fromDate.toISOString())
+                .lte('transaction_date', toDate.toISOString());
+
+            if (txError) throw txError;
+
+            // 2. Get Consumption linked to these transactions to calculate cost
+            const txIds = transactions?.map(t => t.id) || [];
+            if (txIds.length === 0) return res.json([]);
+
+            // We need to batch this if too many, but for now assuming reasonable range
+            const { data: consumptions, error: consError } = await supabaseAdmin
+                .from('op_calculated_consumption')
+                .select('transaction_id, ingredient_id, amount_consumed, op_ingredients(last_cost)')
+                .in('transaction_id', txIds);
+
+            if (consError) throw consError;
+
+            // Map consumption cost by Transaction ID
+            const costByTx: Record<string, number> = {};
+            consumptions?.forEach(c => {
+                const cost = (c.amount_consumed || 0) * (c.op_ingredients?.last_cost || 0);
+                costByTx[c.transaction_id] = (costByTx[c.transaction_id] || 0) + cost;
+            });
+
+            // Aggregate by Product
+            // Note: Since we only have total cost per transaction, assigning cost to specific products in a multi-product order 
+            // is complex without recipe detail.
+            // STRATEGY: We will approximate by prorating cost based on revenue share of the product in that transaction, 
+            // OR simpler: Report Margin by Transaction or Day. 
+            // BETTER STRATEGY for "Product Margins":
+            // We know the recipe cost is (mostly) static. We can calculate "Theoretical Margin".
+            // But the user asked "what ingredients made those menu items".
+            // Let's do: Total Revenue vs Total Cost of Goods Sold (COGS) for the period, and Breakdown by Product Revenue.
+
+            // FOR NOW: We will return a Per-Product Sales report, and a Global COGS. 
+            // Connecting specific consumed ingredients to specific line items in a generic transaction is hard if they aren't linked in DB.
+            // However, `op_calculated_consumption` IS derived from `product -> recipe`.
+            // If we want per-product margin, we need to re-derive the cost from recipes.
+
+            // ALTERNATIVE: Return the "Theoretical" margin based on current recipe cost.
+
+            // Let's stick to the prompt: "customizable reporting module... based on local db of transactions and what ingredients made those menu items"
+
+            // Let's calculate the "Actual" COGS from `op_calculated_consumption` and list it against the Total Revenue.
+            // And for products, show their standard contribution.
+
+            const productStats: Record<string, any> = {};
+            const missingNameIds = new Set<string>();
+
+            transactions?.forEach(tx => {
+                tx.products?.forEach((p: any) => {
+                    const id = (p.product_id || '').toString();
+                    if (id) missingNameIds.add(id);
+                    if (!productStats[id]) productStats[id] = { id, name: p.product_name || id, revenue: 0, units: 0 };
+                    productStats[id].revenue += (parseFloat(p.price || '0') * parseFloat(p.count || p.num || '1'));
+                    productStats[id].units += parseFloat(p.count || p.num || '1');
+                });
+            });
+
+            const nameMap = await getProductNames(Array.from(missingNameIds));
+            Object.values(productStats).forEach((p: any) => {
+                if (nameMap[p.id]) p.name = nameMap[p.id];
+            });
+
+            // Calculate Total COGS from real consumption
+            let totalCOGS = 0;
+            consumptions?.forEach(c => {
+                totalCOGS += (c.amount_consumed || 0) * (c.op_ingredients?.last_cost || 0);
+            });
+
+            const totalRevenue = Object.values(productStats).reduce((acc, p) => acc + p.revenue, 0);
+
+            res.json({
+                totalRevenue,
+                totalCOGS,
+                netMargin: totalRevenue - totalCOGS,
+                marginPercent: totalRevenue > 0 ? ((totalRevenue - totalCOGS) / totalRevenue) * 100 : 0,
+                products: Object.values(productStats).sort((a: any, b: any) => b.revenue - a.revenue)
+            });
+
+        } else {
+            res.status(400).json({ error: 'Invalid report type' });
+        }
+
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
  * GET /api/op/reports/variance-history
  * Get historical variance data
  */
