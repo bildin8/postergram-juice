@@ -258,6 +258,47 @@ export default function PurchaseRequests() {
                     </div>
                 </div>
 
+                {/* Suggestions Panel */}
+                <div className="mb-8 p-4 bg-slate-900 border border-slate-800 rounded-lg">
+                    <div className="flex justify-between items-center mb-4">
+                        <div className="flex items-center gap-2">
+                            <ShoppingCart className="h-5 w-5 text-emerald-500" />
+                            <h3 className="text-lg font-medium text-white">Assisted Ordering</h3>
+                        </div>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-emerald-500 border-emerald-600/50 hover:bg-emerald-600/10"
+                            onClick={async () => {
+                                const res = await fetch("/api/op/reports/below-par");
+                                if (res.ok) {
+                                    const suggestions = await res.json();
+                                    const items = suggestions.map((s: any) => ({
+                                        name: s.name,
+                                        qty: s.qty_to_order > 0 ? s.qty_to_order.toString() : "0",
+                                        unit: s.unit || 'units',
+                                        cost: "",
+                                        notes: "Auto-suggested based on PAR"
+                                    })).filter((i: any) => parseFloat(i.qty) > 0);
+
+                                    if (items.length > 0) {
+                                        setRequestItems(items);
+                                        setIsCreateOpen(true);
+                                        toast({ title: "Suggestions Loaded", description: `Added ${items.length} items to request.` });
+                                    } else {
+                                        toast({ title: "Stock Healthy", description: "No items below PAR level." });
+                                    }
+                                }
+                            }}
+                        >
+                            Load Suggestions based on PAR
+                        </Button>
+                    </div>
+                    <p className="text-sm text-slate-400">
+                        Automatically populate a purchase request with items that are below their minimum stock level.
+                    </p>
+                </div>
+
                 <div className="space-y-8">
                     {/* Pending Section */}
                     <section>
