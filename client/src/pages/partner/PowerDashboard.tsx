@@ -19,6 +19,7 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart as RePieChart, Pie, Cell } from 'recharts';
 
 interface Transaction {
     id: string;
@@ -370,9 +371,12 @@ export default function PowerDashboard() {
                                                             <div className="text-[10px] text-slate-500 mt-0.5">
                                                                 {tx.products?.length || 0} products • {formatTime(tx.transaction_date)}
                                                             </div>
+                                                            <div className="text-[11px] text-slate-400 mt-1 font-medium leading-tight">
+                                                                {tx.products?.map((p: any) => p.product_name || p.name || 'Unknown').join(', ')}
+                                                            </div>
                                                         </div>
                                                     </div>
-                                                    <Badge variant="ghost" className="text-slate-500 text-[10px] group-hover:text-slate-300">
+                                                    <Badge variant="secondary" className="bg-transparent text-slate-500 text-[10px] group-hover:text-slate-300 p-0 hover:bg-transparent">
                                                         <Clock className="h-3 w-3 mr-1" />
                                                         {new Date(tx.transaction_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                     </Badge>
@@ -489,46 +493,50 @@ export default function PowerDashboard() {
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        {/* Daily Sales Trend */}
-                        <Card className="bg-slate-900/50 border-slate-800">
+                        {/* Daily Sales Trend Chart */}
+                        <Card className="bg-slate-900/50 border-slate-800 lg:col-span-2">
                             <CardHeader className="pb-3">
                                 <CardTitle className="text-white text-lg flex items-center gap-2">
                                     <TrendingUp className="h-5 w-5 text-emerald-400" />
-                                    Daily Sales History
+                                    Daily Sales Trend
                                 </CardTitle>
+                                <CardDescription>Revenue performance over the last {reportDays} days</CardDescription>
                             </CardHeader>
-                            <CardContent className="px-0">
-                                <ScrollArea className="h-[350px]">
-                                    <div className="px-6 space-y-3 pb-6">
-                                        {historyLoading ? (
-                                            <div className="py-20 text-center text-slate-500">Retrieving ledger entries...</div>
-                                        ) : dailyHistory.length === 0 ? (
-                                            <div className="py-20 text-center text-slate-500">No historical summaries found.</div>
-                                        ) : (
-                                            dailyHistory.map(day => (
-                                                <div key={day.summary_date} className="flex items-center justify-between p-4 rounded-xl bg-slate-800/40 border border-slate-800 hover:border-emerald-500/20 transition-all">
-                                                    <div>
-                                                        <p className="text-white font-bold">{formatDate(day.summary_date)}</p>
-                                                        <p className="text-slate-500 text-[10px] font-mono">{day.transaction_count} sales</p>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <p className="text-emerald-400 font-black text-lg">{formatCurrency(day.total_sales)}</p>
-                                                        {day.cash_variance !== 0 && (
-                                                            <div className={`text-[10px] font-bold flex items-center justify-end gap-1 ${day.cash_variance < 0 ? 'text-red-400' : 'text-blue-400'}`}>
-                                                                <AlertTriangle className="h-2 w-2" />
-                                                                KES {day.cash_variance} Var
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            ))
-                                        )}
-                                    </div>
-                                </ScrollArea>
+                            <CardContent>
+                                <div className="h-[300px] w-full">
+                                    {historyLoading ? (
+                                        <div className="h-full flex items-center justify-center text-slate-500">Loading chart data...</div>
+                                    ) : dailyHistory.length === 0 ? (
+                                        <div className="h-full flex items-center justify-center text-slate-500">No data available for this period</div>
+                                    ) : (
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <BarChart data={[...dailyHistory].reverse()}>
+                                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                                                <XAxis
+                                                    dataKey="summary_date"
+                                                    stroke="#64748b"
+                                                    fontSize={12}
+                                                    tickFormatter={(value) => new Date(value).toLocaleDateString('en-KE', { day: 'numeric', month: 'short' })}
+                                                />
+                                                <YAxis
+                                                    stroke="#64748b"
+                                                    fontSize={12}
+                                                    tickFormatter={(value) => `K${(value / 1000).toFixed(0)}k`}
+                                                />
+                                                <RechartsTooltip
+                                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#fff' }}
+                                                    formatter={(value: number) => [formatCurrency(value), 'Revenue']}
+                                                    labelFormatter={(label) => new Date(label).toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long' })}
+                                                />
+                                                <Bar dataKey="total_sales" fill="#10b981" radius={[4, 4, 0, 0]} />
+                                            </BarChart>
+                                        </ResponsiveContainer>
+                                    )}
+                                </div>
                             </CardContent>
                         </Card>
 
-                        {/* Top Sellers */}
+                        {/* Top Sellers List */}
                         <Card className="bg-slate-900/50 border-slate-800">
                             <CardHeader className="pb-3">
                                 <CardTitle className="text-white text-lg flex items-center gap-2">
@@ -559,38 +567,43 @@ export default function PowerDashboard() {
                             </CardContent>
                         </Card>
 
-                        {/* Consumption Insights */}
-                        <Card className="bg-slate-900/50 border-slate-800 lg:col-span-2">
+                        {/* Consumption Insights - Now Ingredient Usage Tally */}
+                        <Card className="bg-slate-900/50 border-slate-800">
                             <CardHeader className="pb-3">
                                 <CardTitle className="text-white text-lg flex items-center gap-2">
                                     <PieChart className="h-5 w-5 text-purple-400" />
-                                    Ingredient Consumption Patterns
+                                    Ingredient Usage Tally
                                 </CardTitle>
-                                <CardDescription>Consolidated usage totals for {reportDays} day period</CardDescription>
+                                <CardDescription>Total consumption for {reportDays} day period</CardDescription>
                             </CardHeader>
                             <CardContent className="px-0">
-                                <ScrollArea className="h-[400px]">
-                                    <div className="px-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-10">
+                                <ScrollArea className="h-[350px]">
+                                    <div className="px-6 space-y-3 pb-10">
                                         {consumptionTrends && Object.entries(consumptionTrends).map(([name, data]: [string, any]) => {
                                             const total = Object.values(data).reduce((a: any, b: any) => a + b, 0) as number;
                                             return (
-                                                <div key={name} className="p-4 rounded-xl bg-slate-950 border border-slate-800/50 flex flex-col justify-between">
-                                                    <div className="flex items-center justify-between mb-2">
-                                                        <span className="text-white font-bold text-sm truncate max-w-[150px]">{name}</span>
-                                                        <Badge variant="ghost" className="text-purple-400 text-[10px] h-5 bg-purple-500/5 font-mono">
-                                                            {total.toFixed(0)} units
-                                                        </Badge>
+                                                <div key={name} className="p-3 rounded-lg bg-slate-950 border border-slate-800/50 flex items-center justify-between">
+                                                    <div className="flex-1">
+                                                        <span className="text-white font-bold text-xs block">{name}</span>
+                                                        <div className="flex items-center gap-2 mt-1">
+                                                            <div className="h-1.5 flex-1 bg-slate-900 rounded-full overflow-hidden">
+                                                                <div className="h-full bg-purple-600 rounded-full" style={{ width: '60%' }} />
+                                                            </div>
+                                                            <span className="text-[10px] text-slate-500 w-12 text-right">High usage</span>
+                                                        </div>
                                                     </div>
-                                                    <div className="h-1 bg-slate-900 rounded-full w-full overflow-hidden mt-2">
-                                                        <div className="h-full bg-purple-600 rounded-full" style={{ width: '45%' }} />
-                                                    </div>
-                                                    <div className="flex items-center justify-between mt-4">
-                                                        <span className="text-[10px] text-slate-600 uppercase font-black font-mono">Usage Velocity</span>
-                                                        <span className="text-[10px] text-slate-400">{(total / reportDays).toFixed(1)} / day</span>
+                                                    <div className="ml-4 text-right">
+                                                        <span className="text-purple-400 font-mono font-bold text-sm block">{total.toFixed(0)}</span>
+                                                        <span className="text-[10px] text-slate-600 uppercase">Units</span>
                                                     </div>
                                                 </div>
                                             );
                                         })}
+                                        {(!consumptionTrends || Object.keys(consumptionTrends).length === 0) && (
+                                            <div className="text-center text-slate-500 py-10">
+                                                No consumption data to tally
+                                            </div>
+                                        )}
                                     </div>
                                 </ScrollArea>
                             </CardContent>

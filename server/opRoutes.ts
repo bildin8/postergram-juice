@@ -632,7 +632,40 @@ router.get('/transactions', async (req: Request, res: Response) => {
 
         const { data, error } = await query;
         if (error) throw error;
-        res.json(data);
+
+        // enrich with names if missing
+        const missingNameIds = new Set<string>();
+        const transactions = data || [];
+
+        for (const tx of transactions) {
+            if (tx.products && Array.isArray(tx.products)) {
+                for (const p of tx.products) {
+                    const id = (p.product_id || '').toString();
+                    const name = p.product_name || p.name;
+                    if (id && !name) {
+                        missingNameIds.add(id);
+                    }
+                }
+            }
+        }
+
+        if (missingNameIds.size > 0) {
+            const nameMap = await getProductNames(Array.from(missingNameIds));
+            // Apply names
+            for (const tx of transactions) {
+                if (tx.products && Array.isArray(tx.products)) {
+                    tx.products = tx.products.map((p: any) => {
+                        const id = (p.product_id || '').toString();
+                        if (id && !p.product_name && !p.name) {
+                            return { ...p, product_name: nameMap[id] || 'Unknown' };
+                        }
+                        return p;
+                    });
+                }
+            }
+        }
+
+        res.json(transactions);
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
@@ -1306,6 +1339,21 @@ router.get('/reports/consumption-trends', async (req: Request, res: Response) =>
  * GET /api/op/reports/top-sellers
  * Get top selling products
  */
+// Helper to get product names
+const getProductNames = async (productIds: string[]) => {
+    if (productIds.length === 0) return {};
+    const { data } = await supabaseAdmin
+        .from('op_recipes')
+        .select('poster_product_id, name')
+        .in('poster_product_id', productIds);
+
+    const map: Record<string, string> = {};
+    data?.forEach(r => {
+        if (r.poster_product_id) map[r.poster_product_id] = r.name;
+    });
+    return map;
+};
+
 router.get('/reports/top-sellers', async (req: Request, res: Response) => {
     try {
         const { days = 7 } = req.query;
@@ -1323,15 +1371,38 @@ router.get('/reports/top-sellers', async (req: Request, res: Response) => {
         if (error) throw error;
 
         // Aggregate products
-        const productSales: Record<string, { name: string; quantity: number; revenue: number }> = {};
+        const productSales: Record<string, { id: string; name: string; quantity: number; revenue: number }> = {};
+        const missingNameIds = new Set<string>();
+
         for (const tx of data || []) {
             for (const product of tx.products || []) {
-                const key = product.product_id || product.name;
-                if (!productSales[key]) {
-                    productSales[key] = { name: product.name || 'Unknown', quantity: 0, revenue: 0 };
+                const id = (product.product_id || '').toString();
+                const name = product.product_name || product.name || '';
+
+                if (!id) continue;
+
+                if (!name) missingNameIds.add(id);
+
+                if (!productSales[id]) {
+                    productSales[id] = { id, name: name || 'Unknown', quantity: 0, revenue: 0 };
+                } else if (productSales[id].name === 'Unknown' && name) {
+                    // Update name if we found a transaction that has it
+                    productSales[id].name = name;
                 }
-                productSales[key].quantity += product.count || 1;
-                productSales[key].revenue += (product.price || 0) * (product.count || 1);
+
+                productSales[id].quantity += parseFloat(product.count || product.num || '1');
+                productSales[id].revenue += parseFloat(product.price || '0') * parseFloat(product.count || product.num || '1');
+            }
+        }
+
+        // Fill in missing names
+        if (missingNameIds.size > 0) {
+            const idsList = Array.from(missingNameIds);
+            const nameMap = await getProductNames(idsList);
+            for (const id of idsList) {
+                if (productSales[id] && nameMap[id]) {
+                    productSales[id].name = nameMap[id];
+                }
             }
         }
 
